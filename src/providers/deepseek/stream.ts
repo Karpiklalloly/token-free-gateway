@@ -8,6 +8,44 @@ const JUNK_TOKENS = new Set([
 	"<|endoftext|>",
 ]);
 
+function stripThinkingTags(input: string): { text: string; thinking: string } {
+	let thinking = "";
+	// Remove <think>...</think>, <thinking>...</thinking>, <thought>...</thought> blocks
+	const re = /<(?:think(?:ing)?|thought)\b[^>]*>([\s\S]*?)<\/(?:think(?:ing)?|thought)>/gi;
+	let m: RegExpExecArray | null;
+	let lastIdx = 0;
+	let cleaned = "";
+	while (true) {
+		m = re.exec(input);
+		if (m === null) break;
+		cleaned += input.slice(lastIdx, m.index);
+		thinking += (thinking ? "\n" : "") + (m[1]?.trim() ?? "");
+		lastIdx = m.index + m[0].length;
+	}
+	cleaned += input.slice(lastIdx);
+	// Remove leftover unclosed opening tag and everything after? keep as thinking
+	const openRe = /<(?:think(?:ing)?|thought)\b[^>]*>([\s\S]*)$/i;
+	const openMatch = cleaned.match(openRe);
+	if (openMatch) {
+		thinking += (thinking ? "\n" : "") + (openMatch[1]?.trim() ?? "");
+		cleaned = cleaned.replace(openRe, "");
+	}
+	return { text: cleaned, thinking };
+}
+
+function isThinkingFragmentType(t: unknown): boolean {
+	if (typeof t !== "string") return false;
+	const low = t.toLowerCase();
+	return (
+		low === "thinking" ||
+		low === "reasoning" ||
+		low === "thought" ||
+		low === "think" ||
+		low.includes("thinking") ||
+		low.includes("reasoning")
+	);
+}
+
 export async function parseDeepSeekStream(
 	body: ReadableStream<Uint8Array>,
 	onDelta?: (delta: string) => void,
@@ -21,16 +59,30 @@ export async function parseDeepSeekStream(
 
 	let currentMode: "text" | "thinking" | "tool_call" = "text";
 	let tagBuffer = "";
+	// DeepSeek web fragments: THINK vs RESPONSE — subsequent
+	// p=response/fragments/-1/content and p=undefined APPENDs inherit last fragment type
+	let activeFragmentType: "thinking" | "text" | null = null;
 
+	const stripJunk = (s: string): string => {
+		let out = s;
+		for (const tok of JUNK_TOKENS) {
+			if (out.includes(tok)) out = out.split(tok).join("");
+		}
+		return out;
+	};
 	const emitText = (delta: string) => {
-		if (!delta || JUNK_TOKENS.has(delta)) return;
-		text += delta;
-		onDelta?.(delta);
+		if (!delta) return;
+		const cleaned = stripJunk(delta);
+		if (!cleaned || JUNK_TOKENS.has(cleaned)) return;
+		text += cleaned;
+		onDelta?.(cleaned);
 	};
 
 	const emitThinking = (delta: string) => {
-		if (!delta || JUNK_TOKENS.has(delta)) return;
-		thinkingText += delta;
+		if (!delta) return;
+		const cleaned = stripJunk(delta);
+		if (!cleaned || JUNK_TOKENS.has(cleaned)) return;
+		thinkingText += cleaned;
 	};
 
 	const pushDelta = (delta: string, forceType?: "text" | "thinking") => {
@@ -134,17 +186,43 @@ export async function parseDeepSeekStream(
 				}
 
 				const pField = data.p;
-				const pStr = typeof pField === "string" ? pField : "";
-				if (
-					(pStr.includes("reasoning") || data.type === "thinking") &&
-					typeof data.v === "string"
-				) {
+				const pStr = typeof pField === "string" ? pField.toLowerCase() : "";
+				const typeStr = typeof data.type === "string" ? (data.type as string).toLowerCase() : "";
+				const isThinkingP =
+					pStr.includes("reasoning") || pStr.includes("thinking") || pStr.includes("thought");
+				const isThinkingType =
+					typeStr.includes("thinking") ||
+					typeStr.includes("reasoning") ||
+					typeStr.includes("thought") ||
+					typeStr === "think";
+
+				// Any reasoning/thinking payload routed to thinkingText
+				if (isThinkingP && typeof data.v === "string") {
 					pushDelta(data.v, "thinking");
 					return;
 				}
-
-				if (data.type === "thinking" && typeof data.content === "string") {
+				if (isThinkingType && typeof data.v === "string") {
+					pushDelta(data.v, "thinking");
+					return;
+				}
+				if (isThinkingType && typeof data.content === "string") {
 					pushDelta(data.content, "thinking");
+					return;
+				}
+
+				// Fragment content appends (p=response/fragments/-1/content or bare v with active fragment)
+				// These must be routed by activeFragmentType, not generic content handler
+				if (
+					typeof data.v === "string" &&
+					(pStr === "response/fragments/-1/content" || (!pField && activeFragmentType !== null))
+				) {
+					// ignore elapsed_secs etc which are not content but same p prefix — only content uses string v without elapsed
+					if (pStr.includes("elapsed")) return;
+					if (activeFragmentType === "thinking") {
+						pushDelta(data.v, "thinking");
+					} else {
+						pushDelta(data.v);
+					}
 					return;
 				}
 
@@ -152,15 +230,16 @@ export async function parseDeepSeekStream(
 					typeof data.v === "string" &&
 					(!pField || pStr.includes("content") || pStr.includes("choices"))
 				) {
+					// fallback for non-fragment content (e.g. response/content)
 					pushDelta(data.v);
 					return;
 				}
-				if (data.type === "text" && typeof data.content === "string") {
+				if (typeStr === "text" && typeof data.content === "string") {
 					pushDelta(data.content);
 					return;
 				}
 
-				if (data.type === "search_result" || String(data.p || "").includes("search_results")) {
+				if (typeStr === "search_result" || String(data.p || "").includes("search_results")) {
 					const searchData = data.v ?? data.content;
 					const query =
 						typeof searchData === "string" ? searchData : (searchData as { query?: string })?.query;
@@ -171,8 +250,22 @@ export async function parseDeepSeekStream(
 				}
 
 				if (Array.isArray(data.v)) {
+					// p=response/fragments APPEND — track active fragment type for subsequent -1/content appends
+					if (pStr === "response/fragments" || pStr.includes("fragments")) {
+						for (const frag of data.v as Array<Record<string, unknown>>) {
+							const isThink = isThinkingFragmentType(frag.type);
+							activeFragmentType = isThink ? "thinking" : "text";
+							// emit initial fragment content if present
+							if (isThink) {
+								pushDelta(String(frag.content || ""), "thinking");
+							} else if (frag.content) {
+								pushDelta(String(frag.content));
+							}
+						}
+						return;
+					}
 					for (const frag of data.v as Array<Record<string, unknown>>) {
-						if (frag.type === "THINKING" || frag.type === "reasoning") {
+						if (isThinkingFragmentType(frag.type)) {
 							pushDelta(String(frag.content || ""), "thinking");
 						} else if (frag.content) {
 							pushDelta(String(frag.content));
@@ -185,7 +278,10 @@ export async function parseDeepSeekStream(
 					?.fragments;
 				if (Array.isArray(fragments)) {
 					for (const frag of fragments as Array<{ type?: string; content?: string }>) {
-						if (frag.type === "THINKING" || frag.type === "reasoning") {
+						const isThink = isThinkingFragmentType(frag.type);
+						// init sync: set active to last fragment type
+						activeFragmentType = isThink ? "thinking" : "text";
+						if (isThink) {
 							pushDelta(frag.content || "", "thinking");
 						} else if (frag.content) {
 							pushDelta(frag.content);
@@ -195,11 +291,19 @@ export async function parseDeepSeekStream(
 				}
 
 				const choice = (
-					data.choices as Array<{ delta?: { reasoning_content?: string; content?: string } }>
+					data.choices as Array<{
+						delta?: { reasoning_content?: string; thinking_content?: string; content?: string };
+					}>
 				)?.[0];
 				if (choice?.delta) {
 					if (choice.delta.reasoning_content) {
 						pushDelta(choice.delta.reasoning_content, "thinking");
+					}
+					if ((choice.delta as Record<string, unknown>).thinking_content) {
+						pushDelta(
+							String((choice.delta as Record<string, unknown>).thinking_content),
+							"thinking",
+						);
 					}
 					if (choice.delta.content) {
 						pushDelta(choice.delta.content);
@@ -233,6 +337,18 @@ export async function parseDeepSeekStream(
 		}
 	} finally {
 		reader.releaseLock();
+	}
+
+	// Final defensive stripping: remove any <think> blocks that slipped through text
+	const stripped = stripThinkingTags(text);
+	if (stripped.thinking) {
+		thinkingText = (thinkingText ? `${thinkingText}\n` : "") + stripped.thinking;
+		text = stripped.text;
+	}
+	// Also filter junk tokens that may be surrounded by whitespace
+	for (const tok of JUNK_TOKENS) {
+		text = text.split(tok).join("");
+		thinkingText = thinkingText.split(tok).join("");
 	}
 
 	return { text: text.trim(), thinkingText: thinkingText.trim() };
