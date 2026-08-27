@@ -21,7 +21,18 @@ const OPENAI_TOOL_CALLS_REGEX =
 	/\{\s*"tool_calls"\s*:\s*\[\s*(\{[\s\S]*?\})\s*(?:,[\s\S]*?)?\]\s*\}/;
 
 export function extractToolCalls(text: string): ParsedToolCall[] {
-	// Try extracting multiple XML tool_calls first
+	// Try extracting multiple fenced tool_json blocks first
+	const fencedMatches = [...text.matchAll(/```tool_json\s*\n?\s*(\{[\s\S]*?\})\s*\n?\s*```/g)];
+	if (fencedMatches.length > 0) {
+		const calls: ParsedToolCall[] = [];
+		for (const match of fencedMatches) {
+			const parsed = parseToolJson(match[1] ?? "");
+			if (parsed) calls.push(parsed);
+		}
+		if (calls.length > 0) return calls;
+	}
+
+	// Try extracting multiple XML tool_calls
 	const xmlMatches = [...text.matchAll(/<tool_call[^>]*>([\s\S]*?)<\/tool_call>/g)];
 	if (xmlMatches.length > 0) {
 		const calls: ParsedToolCall[] = [];
@@ -32,7 +43,7 @@ export function extractToolCalls(text: string): ParsedToolCall[] {
 		if (calls.length > 0) return calls;
 	}
 
-	// Try single extraction
+	// Try single extraction (fallback)
 	const single = extractSingleToolCall(text);
 	return single ? [single] : [];
 }
