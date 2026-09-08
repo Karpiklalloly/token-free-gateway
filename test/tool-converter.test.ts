@@ -180,6 +180,13 @@ describe("buildPromptFromMessages", () => {
 		expect(prompt).toContain("可用工具:");
 	});
 
+	test("detects Russian language and uses RU prompt with no-preamble rule", () => {
+		const messages: ChatMessage[] = [{ role: "user", content: "Посмотри сама на все" }];
+		const { prompt } = buildPromptFromMessages(messages, TOOLS);
+		expect(prompt).toContain("Доступные инструменты:");
+		expect(prompt).toContain("Только блок tool_json, без приветствий");
+	});
+
 	test("handles legacy function role", () => {
 		const messages: ChatMessage[] = [
 			{ role: "user", content: "Hi" },
@@ -234,5 +241,51 @@ describe("parseToolResponse", () => {
 		const result = parseToolResponse(text, undefined);
 		expect(result.finishReason).toBe("stop");
 		expect(result.content).toBe(text);
+	});
+
+	test("parses bracket Calling hallucination into tool_calls", () => {
+		const terminalTools: ToolDefinition[] = [
+			{
+				type: "function",
+				function: {
+					name: "terminal",
+					description: "Run a shell command",
+					parameters: {
+						type: "object",
+						properties: { command: { type: "string" } },
+						required: ["command"],
+					},
+				},
+			},
+		];
+		const text = 'Хорошо, посмотрю сама.\n\n[Calling terminal with command: ls -la "D:/sdktest/tasks/"]';
+		const result = parseToolResponse(text, terminalTools);
+		expect(result.finishReason).toBe("tool_calls");
+		expect(result.toolCalls).toHaveLength(1);
+		expect(result.toolCalls?.[0]?.function.name).toBe("terminal");
+		expect(JSON.parse(result.toolCalls?.[0]?.function.arguments ?? "{}")).toEqual({
+			command: 'ls -la "D:/sdktest/tasks/"',
+		});
+	});
+
+	test("fuzzy-matches Calling hint to run_terminal tool", () => {
+		const terminalTools: ToolDefinition[] = [
+			{
+				type: "function",
+				function: {
+					name: "run_terminal",
+					description: "Run a shell command in terminal",
+					parameters: {
+						type: "object",
+						properties: { command: { type: "string" } },
+						required: ["command"],
+					},
+				},
+			},
+		];
+		const text = "[Calling terminal with command: pwd]";
+		const result = parseToolResponse(text, terminalTools);
+		expect(result.finishReason).toBe("tool_calls");
+		expect(result.toolCalls?.[0]?.function.name).toBe("run_terminal");
 	});
 });

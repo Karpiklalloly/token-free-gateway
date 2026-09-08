@@ -56,6 +56,15 @@ describe("extractSingleToolCall", () => {
 		});
 	});
 
+	test("parses bracket Calling hallucination (DeepSeek)", () => {
+		const text = 'Хорошо, посмотрю сама.\n\n[Calling terminal with command: ls -la "D:/sdktest/tasks/"]';
+		const result = extractSingleToolCall(text);
+		expect(result).toEqual({
+			name: "terminal",
+			arguments: { command: 'ls -la "D:/sdktest/tasks/"' },
+		});
+	});
+
 	test("returns null for plain text", () => {
 		const text = "Hello, I'm just a regular response with no tool calls.";
 		expect(extractSingleToolCall(text)).toBeNull();
@@ -95,6 +104,10 @@ describe("hasToolCall", () => {
 
 	test("detects XML", () => {
 		expect(hasToolCall("<tool_call>x</tool_call>")).toBe(true);
+	});
+
+	test("detects bracket Calling hallucination", () => {
+		expect(hasToolCall('[Calling terminal with command: ls -la "D:/x/"]')).toBe(true);
 	});
 
 	test("returns false for plain text", () => {

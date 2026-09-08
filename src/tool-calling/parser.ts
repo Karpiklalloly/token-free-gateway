@@ -19,6 +19,10 @@ const BARE_JSON_REGEX = /\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\
 const XML_TOOL_REGEX = /<tool_call[^>]*>([\s\S]*?)<\/tool_call>/;
 const OPENAI_TOOL_CALLS_REGEX =
 	/\{\s*"tool_calls"\s*:\s*\[\s*(\{[\s\S]*?\})\s*(?:,[\s\S]*?)?\]\s*\}/;
+// Hallucinated bracket format seen on DeepSeek Web, e.g.
+// [Calling terminal with command: ls -la "D:/x/"]
+const BRACKET_CALL_REGEX =
+	/\[\s*Calling\s+([A-Za-z_][\w-]*)\s+with\s+command\s*:\s*([\s\S]*?)\s*\]/i;
 
 export function extractToolCalls(text: string): ParsedToolCall[] {
 	// Try extracting multiple fenced tool_json blocks first
@@ -71,7 +75,13 @@ export function extractSingleToolCall(text: string): ParsedToolCall | null {
 	const xml = XML_TOOL_REGEX.exec(text);
 	if (xml?.[1]) return parseToolJson(xml[1]);
 
-	// 5. Fuzzy repair: truncated JSON
+	// 5. Hallucinated bracket format: [Calling <tool> with command: <cmd>]
+	const bracket = BRACKET_CALL_REGEX.exec(text);
+	if (bracket?.[1] && bracket?.[2] !== undefined) {
+		return { name: bracket[1].toLowerCase(), arguments: { command: bracket[2].trim() } };
+	}
+
+	// 6. Fuzzy repair: truncated JSON
 	const fuzzy = text.match(/\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*\{([^}]*)\}/);
 	if (fuzzy?.[1] && fuzzy?.[2] !== undefined) {
 		const repaired = `{"tool":"${fuzzy[1]}","parameters":{${fuzzy[2]}}}`;
@@ -113,6 +123,7 @@ export function hasToolCall(text: string): boolean {
 		FENCED_REGEX.test(text) ||
 		BARE_JSON_REGEX.test(text) ||
 		XML_TOOL_REGEX.test(text) ||
-		OPENAI_TOOL_CALLS_REGEX.test(text)
+		OPENAI_TOOL_CALLS_REGEX.test(text) ||
+		BRACKET_CALL_REGEX.test(text)
 	);
 }

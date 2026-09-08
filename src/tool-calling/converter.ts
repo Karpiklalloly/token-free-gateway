@@ -16,7 +16,7 @@ import type {
 	ToolMessage,
 } from "../openai/types.ts";
 import { extractToolCalls, hasToolCall } from "./parser.ts";
-import { buildToolPrompt, detectLanguage } from "./prompt.ts";
+import { buildToolPrompt, detectLanguage, type ToolPromptLang } from "./prompt.ts";
 
 export interface ConvertedPrompt {
 	prompt: string;
@@ -24,7 +24,7 @@ export interface ConvertedPrompt {
 	hasTools: boolean;
 }
 
-function detectLang(messages: ChatMessage[]): "en" | "cn" {
+function detectLang(messages: ChatMessage[]): ToolPromptLang {
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
 		if (msg?.role === "user") {
@@ -155,6 +155,24 @@ export function buildPromptFromMessages(
 }
 
 /**
+ * Resolve a model-produced tool name to a requested tool.
+ * Models (esp. via prompt injection) often output a close-but-inexact
+ * hint like "terminal" when the real tool is "run_terminal".
+ */
+function resolveToolName(parsedName: string, requestedTools: ToolDefinition[]): string | null {
+	const exact = requestedTools.find((t) => t.function.name === parsedName);
+	if (exact) return exact.function.name;
+	const lower = parsedName.toLowerCase();
+	const ci = requestedTools.find((t) => t.function.name.toLowerCase() === lower);
+	if (ci) return ci.function.name;
+	const sub = requestedTools.find((t) => {
+		const tn = t.function.name.toLowerCase();
+		return tn.includes(lower) || lower.includes(tn);
+	});
+	return sub ? sub.function.name : null;
+}
+
+/**
  * Parse Claude's text response and detect tool calls.
  * Returns either tool_calls or plain text content.
  *
@@ -175,7 +193,15 @@ export function parseToolResponse(
 
 	const validToolNames = new Set(requestedTools.map((t) => t.function.name));
 	const parsed = extractToolCalls(text);
-	const validCalls = parsed.filter((c) => validToolNames.has(c.name));
+	const validCalls = [];
+	for (const c of parsed) {
+		if (validToolNames.has(c.name)) {
+			validCalls.push(c);
+			continue;
+		}
+		const resolved = resolveToolName(c.name, requestedTools);
+		if (resolved) validCalls.push({ name: resolved, arguments: c.arguments });
+	}
 
 	if (validCalls.length === 0) {
 		return { content: text, toolCalls: undefined, finishReason: "stop" };
