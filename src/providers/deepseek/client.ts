@@ -62,13 +62,14 @@ type BrowserEvalStringResult =
 export function resolveDeepSeekFlags(
 	model: string | undefined,
 	reasoningEffort?: ReasoningEffort,
+	legacySearchEnabled?: boolean,
 ): { base: string; thinking: boolean; search: boolean } {
 	const spec = parseModelString(model || "deepseek-chat");
 	const isReasoner = spec.base === "deepseek-reasoner";
 	return {
 		base: spec.base,
 		thinking: spec.think ?? effortToThink(reasoningEffort) ?? isReasoner,
-		search: spec.search ?? true,
+		search: spec.search ?? legacySearchEnabled ?? true,
 	};
 }
 
@@ -324,7 +325,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		).toString("base64");
 		const page = await this.getPage();
 		const headerRecord = this.browserHeaders();
-		const flags = resolveDeepSeekFlags(params.model, params.reasoningEffort);
+		const flags = resolveDeepSeekFlags(params.model, params.reasoningEffort, params.searchEnabled);
 		const requestBody = {
 			chat_session_id: params.sessionId,
 			parent_message_id: params.parentMessageId ?? null,

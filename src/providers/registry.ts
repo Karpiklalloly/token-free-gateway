@@ -111,9 +111,9 @@ export async function resolveModelToProvider(model: string): Promise<string | nu
 		if (defs.some((d) => d.id === providerId)) return providerId!;
 	}
 
-	// Search all providers for matching model ID
+	// Search all providers for matching model ID (suffixes stripped: "base:flag" → "base")
 	for (const def of defs) {
-		if (def.models.some((m) => m.id === model)) return def.id;
+		if (def.models.some((m) => m.id === model || m.id === model.split(":")[0])) return def.id;
 	}
 
 	return null;

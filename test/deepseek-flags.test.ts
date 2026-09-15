@@ -34,4 +34,9 @@ describe("resolveDeepSeekFlags", () => {
 			search: false,
 		});
 	});
+
+	test("legacy searchEnabled applies when no suffix", () => {
+		expect(resolveDeepSeekFlags("deepseek-chat", undefined, false).search).toBe(false);
+		expect(resolveDeepSeekFlags("deepseek-chat:search-off", undefined, true).search).toBe(false);
+	});
 });
