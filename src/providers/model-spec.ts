@@ -16,7 +16,8 @@ const VALID_SUFFIXES = ["think", "no-think", "search", "search-off"];
  * Unknown suffixes throw ProviderApiError(400) — never silently ignored.
  */
 export function parseModelString(model: string): ParsedModelSpec {
-	const [base, ...suffixes] = model.split(":");
+	const noPrefix = model.includes("/") ? (model.split("/").pop() ?? model) : model;
+	const [base, ...suffixes] = noPrefix.split(":");
 	if (!base) throw new ProviderApiError(400, `Invalid model id "${model}"`);
 	let think: boolean | undefined;
 	let search: boolean | undefined;

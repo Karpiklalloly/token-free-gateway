@@ -36,6 +36,19 @@ describe("parseModelString", () => {
 			expect(String(err.message)).toContain("turbo");
 		}
 	});
+
+	test("strips provider prefix before parsing", () => {
+		expect(parseModelString("glm-intl-web/glm-5.3")).toEqual({
+			base: "glm-5.3",
+			think: undefined,
+			search: undefined,
+		});
+		expect(parseModelString("deepseek-web/deepseek-chat:think")).toEqual({
+			base: "deepseek-chat",
+			think: true,
+			search: undefined,
+		});
+	});
 });
 
 describe("effortToThink", () => {

@@ -83,7 +83,11 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		defaultModel: "deepseek-chat",
 		models: [
 			{ id: "deepseek-chat", name: "DeepSeek Chat" },
+			{ id: "deepseek-chat:think", name: "DeepSeek Chat (thinking)" },
+			{ id: "deepseek-chat:search-off", name: "DeepSeek Chat (no search)" },
 			{ id: "deepseek-reasoner", name: "DeepSeek Reasoner" },
+			{ id: "deepseek-reasoner:no-think", name: "DeepSeek Reasoner (no thinking)" },
+			{ id: "deepseek-reasoner:search-off", name: "DeepSeek Reasoner (no search)" },
 		],
 	};
 
@@ -137,6 +141,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		signal?: AbortSignal;
 		reasoningEffort?: ReasoningEffort;
 	}): Promise<ReadableStream<Uint8Array>> {
+		resolveDeepSeekFlags(params.model, params.reasoningEffort);
 		await this.getPage();
 		if (!this.chatSessionId) {
 			const session = await this.createChatSession();
@@ -317,6 +322,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		signal?: AbortSignal;
 		reasoningEffort?: ReasoningEffort;
 	}) {
+		resolveDeepSeekFlags(params.model, params.reasoningEffort);
 		const targetPath = "/api/v0/chat/completion";
 		const challenge = await this.createPowChallenge(targetPath);
 		const answer = await this.solvePow(challenge);

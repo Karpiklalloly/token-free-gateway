@@ -2,11 +2,18 @@ import type { Page } from "playwright-core";
 import { pasteText } from "../../browser/dom-input.ts";
 import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
-import { effortToThink, parseModelString } from "../model-spec.ts";
+import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
 import { parseCookieHeader } from "../shared/cookie-parser.ts";
 import type { StreamResult } from "../types.ts";
 import type { GlmIntlWebAuth } from "./auth.ts";
 import { parseGlmIntlStream } from "./stream.ts";
+
+export function resolveGlmThink(
+	suffixThink: boolean | undefined,
+	reasoningEffort?: ReasoningEffort,
+): boolean | undefined {
+	return suffixThink ?? effortToThink(reasoningEffort);
+}
 
 export class GlmIntlWebClient extends BaseDomClient<GlmIntlWebAuth> {
 	readonly providerId = "glm-intl-web";
@@ -128,7 +135,7 @@ export class GlmIntlWebClient extends BaseDomClient<GlmIntlWebAuth> {
 	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
 		const spec = parseModelString(params.model);
 		await this.ensureModel(page, spec.base);
-		await this.ensureThink(page, spec.think ?? effortToThink(params.reasoningEffort));
+		await this.ensureThink(page, resolveGlmThink(spec.think, params.reasoningEffort));
 		if (!page.url().includes("chat.z.ai")) {
 			await page.goto("https://chat.z.ai/", { waitUntil: "domcontentloaded", timeout: 120000 });
 		}

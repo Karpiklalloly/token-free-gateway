@@ -111,7 +111,9 @@ export async function resolveModelToProvider(model: string): Promise<string | nu
 		if (defs.some((d) => d.id === providerId)) return providerId!;
 	}
 
-	// Search all providers for matching model ID (suffixes stripped: "base:flag" → "base")
+	// Search all providers for matching model ID (suffixes stripped: "base:flag" -> "base").
+	// NOTE: only DeepSeek and GLM-intl clients interpret suffixes today; for other
+	// providers a suffixed id routes by base and the suffix is ignored.
 	for (const def of defs) {
 		if (def.models.some((m) => m.id === model || m.id === model.split(":")[0])) return def.id;
 	}
