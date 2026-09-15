@@ -3,7 +3,8 @@
  * All 13 Web AI providers are registered here with their model catalogs.
  */
 
-import { getCredentials } from "./auth-store.ts";
+import { getCredentials, listAuthorizedProviders } from "./auth-store.ts";
+import { getCachedModels, setCachedModels } from "./model-cache.ts";
 import type { ModelInfo, ProviderDefinition, WebProviderClient } from "./types.ts";
 
 // Lazy-loaded provider definitions to avoid importing all providers at startup
@@ -136,7 +137,7 @@ export async function listAllModels(): Promise<ModelInfo[]> {
 	for (const def of defs) {
 		const creds = getCredentials(def.id);
 		if (!creds) continue;
-		models.push(...def.models);
+		models.push(...(getCachedModels(def.id) ?? def.models));
 	}
 	return models;
 }
@@ -191,4 +192,54 @@ export async function checkAllSessions(): Promise<
 		}),
 	);
 	return results;
+}
+
+export interface RefreshModelsReport {
+	refreshed: string[];
+	failed: { provider: string; reason: string }[];
+	models: number;
+}
+
+const REFRESH_TIMEOUT_MS = 15_000;
+
+/**
+ * Refresh the cached model list for authorized providers.
+ * Best-effort per provider: one failure never fails the whole report.
+ * Providers without a live `fetchModels()` override fall back to static.
+ */
+export async function refreshModels(providerId?: string): Promise<RefreshModelsReport> {
+	const defs = await loadDefinitions();
+	const authorized = new Set(listAuthorizedProviders());
+	const targets = defs.filter(
+		(d) => authorized.has(d.id) && (!providerId || d.id === providerId),
+	);
+	const report: RefreshModelsReport = { refreshed: [], failed: [], models: 0 };
+	if (providerId && targets.length === 0) {
+		report.failed.push({ provider: providerId, reason: "not authorized" });
+		return report;
+	}
+	await Promise.all(
+		targets.map(async (def) => {
+			try {
+				const client = await getProviderClient(def.id);
+				if (!client) throw new Error("no credentials");
+				const live =
+					(await Promise.race([
+						client.fetchModels?.() ?? client.listModels(),
+						new Promise<never>((_, reject) =>
+							setTimeout(() => reject(new Error("refresh timed out")), REFRESH_TIMEOUT_MS),
+						),
+					])) ?? def.models;
+				setCachedModels(def.id, [...live]);
+				report.refreshed.push(def.id);
+			} catch (err) {
+				report.failed.push({
+					provider: def.id,
+					reason: err instanceof Error ? err.message : String(err),
+				});
+			}
+		}),
+	);
+	report.models = (await listAllModels()).length;
+	return report;
 }
