@@ -8,7 +8,11 @@ export const definition: ProviderDefinition = {
 	name: "DeepSeek Web",
 	models: [
 		{ id: "deepseek-chat", name: "DeepSeek Chat" },
+		{ id: "deepseek-chat:think", name: "DeepSeek Chat (thinking)" },
+		{ id: "deepseek-chat:search-off", name: "DeepSeek Chat (no search)" },
 		{ id: "deepseek-reasoner", name: "DeepSeek Reasoner" },
+		{ id: "deepseek-reasoner:no-think", name: "DeepSeek Reasoner (no thinking)" },
+		{ id: "deepseek-reasoner:search-off", name: "DeepSeek Reasoner (no search)" },
 	],
 	factory: (credentials) => new DeepSeekWebClient(credentials as DeepSeekWebCredentials),
 	loginFn: loginDeepseekWeb,

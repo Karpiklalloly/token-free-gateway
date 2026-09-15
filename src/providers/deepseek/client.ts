@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import type { Page } from "playwright-core";
 import { BaseApiClient } from "../factory/base-api-client.ts";
 import type { ApiClientConfig, NormalizedSendParams } from "../factory/types.ts";
-import type { ReasoningEffort } from "../model-spec.ts";
+import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
 import { parseCookieHeader } from "../shared/cookie-parser.ts";
 import { throwIfSessionExpired } from "../shared/error-guard.ts";
 import type { EvalResult } from "../shared/eval-helpers.ts";
@@ -58,6 +58,19 @@ type BrowserEvalResult = { ok: true; data: unknown } | { ok: false; status: numb
 type BrowserEvalStringResult =
 	| { ok: true; data: string }
 	| { ok: false; status: number; error: string };
+
+export function resolveDeepSeekFlags(
+	model: string | undefined,
+	reasoningEffort?: ReasoningEffort,
+): { base: string; thinking: boolean; search: boolean } {
+	const spec = parseModelString(model || "deepseek-chat");
+	const isReasoner = spec.base === "deepseek-reasoner";
+	return {
+		base: spec.base,
+		thinking: spec.think ?? effortToThink(reasoningEffort) ?? isReasoner,
+		search: spec.search ?? true,
+	};
+}
 
 export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 	readonly providerId = "deepseek-web";
@@ -134,6 +147,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 			message: params.message,
 			model: params.model,
 			signal: params.signal,
+			reasoningEffort: params.reasoningEffort,
 		});
 		if (!body) throw new Error("DeepSeek Web API returned empty response body");
 		return body;
@@ -300,6 +314,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		preempt?: boolean;
 		parentMessageId?: string | number | null;
 		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
 	}) {
 		const targetPath = "/api/v0/chat/completion";
 		const challenge = await this.createPowChallenge(targetPath);
@@ -309,13 +324,14 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		).toString("base64");
 		const page = await this.getPage();
 		const headerRecord = this.browserHeaders();
+		const flags = resolveDeepSeekFlags(params.model, params.reasoningEffort);
 		const requestBody = {
 			chat_session_id: params.sessionId,
 			parent_message_id: params.parentMessageId ?? null,
 			prompt: params.message,
 			ref_file_ids: params.fileIds || [],
-			thinking_enabled: !(params.model === "deepseek-chat" && !params.model?.includes("reasoning")),
-			search_enabled: params.searchEnabled ?? true,
+			thinking_enabled: flags.thinking,
+			search_enabled: flags.search,
 			preempt: params.preempt ?? false,
 		};
 		const evalPromise = page.evaluate(
