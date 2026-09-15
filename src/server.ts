@@ -7,6 +7,7 @@ import {
 	checkAllSessions,
 	getClientForModel,
 	listAllModels,
+	refreshModels,
 	resolveModelToProvider,
 } from "./providers/registry.ts";
 
@@ -52,6 +53,10 @@ async function handleRequest(req: Request): Promise<Response> {
 
 	if (pathname === "/v1/models" && req.method === "GET") {
 		return withCors(await handleModelsRoute());
+	}
+
+	if (pathname === "/v1/models/refresh" && req.method === "POST") {
+		return withCors(await handleRefreshModelsRoute());
 	}
 
 	if (pathname.startsWith("/v1/models/") && req.method === "GET") {
@@ -130,6 +135,11 @@ async function handleModelsRoute(): Promise<Response> {
 	return Response.json({ object: "list", data });
 }
 
+async function handleRefreshModelsRoute(): Promise<Response> {
+	const report = await refreshModels();
+	return Response.json({ ...report, models: (await listAllModels()).length });
+}
+
 async function handleModelByIdRoute(modelId: string): Promise<Response> {
 	const models = await listAllModels();
 	const model = models.find((m) => m.id === modelId);
@@ -164,6 +174,16 @@ console.log(`Request timeout: ${config.requestTimeoutSec}s`);
 console.log(
 	`Authorized providers: ${authorized.length > 0 ? authorized.join(", ") : "none — run 'token-free-gateway webauth' to authorize"}`,
 );
+
+refreshModels()
+	.then((report) => {
+		console.log(
+			`[models] Startup refresh: ${report.refreshed.length} ok, ${report.failed.length} failed, ${report.models} models`,
+		);
+	})
+	.catch((err) => {
+		console.warn(`[models] Startup refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+	});
 
 async function gracefulShutdown(signal: string) {
 	console.log(`\nReceived ${signal}, shutting down...`);
