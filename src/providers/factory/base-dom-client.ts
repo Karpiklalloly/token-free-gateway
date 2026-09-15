@@ -92,6 +92,10 @@ export abstract class BaseDomClient<TAuth = unknown> implements WebProviderClien
 		return this.config.models;
 	}
 
+	fetchModels(): Promise<ModelInfo[]> {
+		return Promise.resolve(this.config.models);
+	}
+
 	async close(): Promise<void> {
 		this.page = null;
 	}

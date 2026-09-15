@@ -48,6 +48,11 @@ export interface WebProviderClient {
 		onDelta?: (delta: string) => void,
 	): Promise<StreamResult>;
 	listModels(): ModelInfo[];
+	/**
+	 * Live model discovery. Optional: defaults to `listModels()` (static catalog)
+	 * until a provider implements a real override. Used by `refreshModels()`.
+	 */
+	fetchModels?(): Promise<ModelInfo[]>;
 	close?(): Promise<void>;
 	/** Lightweight session validity check (e.g. cookie expiry, test API call). */
 	checkSession?(): Promise<{ valid: boolean; reason?: string }>;
