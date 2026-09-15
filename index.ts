@@ -20,6 +20,7 @@ Commands:
   status              Show gateway server running status
   webauth             Interactive provider authorization wizard
   chrome [start|stop] Launch/stop Chrome in remote-debug mode for webauth
+  models [provider] [--refresh] [--json] Show/refresh models of authorized providers
 
 Options:
   --help, -h          Show this help message
@@ -65,6 +66,9 @@ if (command === "webauth") {
 } else if (command === "status") {
 	const { statusDaemon } = await import("./src/cli/daemon.ts");
 	await statusDaemon();
+} else if (command === "models") {
+	const { modelsCommand } = await import("./src/cli/models.ts");
+	await modelsCommand(args.slice(1));
 } else if (!command || command === "serve" || command === "__serve") {
 	await import("./src/server.ts");
 } else {
