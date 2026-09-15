@@ -1,4 +1,5 @@
 // ---- Request types ----
+import type { ReasoningEffort } from "../providers/model-spec.ts";
 
 export interface ChatCompletionRequest {
 	model: string;
@@ -6,6 +7,7 @@ export interface ChatCompletionRequest {
 	tools?: ToolDefinition[];
 	tool_choice?: ToolChoice;
 	stream?: boolean;
+	reasoning_effort?: ReasoningEffort;
 	temperature?: number;
 	max_tokens?: number;
 	user?: string;

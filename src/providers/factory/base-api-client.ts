@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import type { ReasoningEffort } from "../model-spec.ts";
 import type { BrowserCookie } from "../shared/cookie-parser.ts";
 import { throwIfSessionExpired } from "../shared/error-guard.ts";
 import type { EvalResult } from "../shared/eval-helpers.ts";
@@ -75,12 +76,14 @@ export abstract class BaseApiClient<TAuth = unknown> implements WebProviderClien
 		message: string;
 		model?: string;
 		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
 	}): Promise<ReadableStream<Uint8Array>> {
 		const page = await this.getPage();
 		const normalized: NormalizedSendParams = {
 			message: params.message,
 			model: params.model || this.config.defaultModel,
 			signal: params.signal,
+			reasoningEffort: params.reasoningEffort,
 		};
 
 		try {

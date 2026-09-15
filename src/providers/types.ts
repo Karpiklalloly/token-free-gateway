@@ -1,3 +1,5 @@
+import type { ReasoningEffort } from "./model-spec.ts";
+
 export interface ModelInfo {
 	id: string;
 	name: string;
@@ -42,6 +44,7 @@ export interface WebProviderClient {
 		message: string;
 		model?: string;
 		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
 	}): Promise<ReadableStream<Uint8Array>>;
 	parseStream(
 		body: ReadableStream<Uint8Array>,

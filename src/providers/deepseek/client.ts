@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import type { Page } from "playwright-core";
 import { BaseApiClient } from "../factory/base-api-client.ts";
 import type { ApiClientConfig, NormalizedSendParams } from "../factory/types.ts";
+import type { ReasoningEffort } from "../model-spec.ts";
 import { parseCookieHeader } from "../shared/cookie-parser.ts";
 import { throwIfSessionExpired } from "../shared/error-guard.ts";
 import type { EvalResult } from "../shared/eval-helpers.ts";
@@ -120,6 +121,7 @@ export class DeepSeekWebClient extends BaseApiClient<DeepSeekWebCredentials> {
 		message: string;
 		model?: string;
 		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
 	}): Promise<ReadableStream<Uint8Array>> {
 		await this.getPage();
 		if (!this.chatSessionId) {

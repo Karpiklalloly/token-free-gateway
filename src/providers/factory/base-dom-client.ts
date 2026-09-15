@@ -1,4 +1,5 @@
 import type { Page } from "playwright-core";
+import type { ReasoningEffort } from "../model-spec.ts";
 import type { BrowserCookie } from "../shared/cookie-parser.ts";
 import { ensurePage } from "../shared/page-lifecycle.ts";
 import { textToStream } from "../shared/stream-helpers.ts";
@@ -64,12 +65,14 @@ export abstract class BaseDomClient<TAuth = unknown> implements WebProviderClien
 		message: string;
 		model?: string;
 		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
 	}): Promise<ReadableStream<Uint8Array>> {
 		const page = await this.getPage();
 		const normalized: NormalizedSendParams = {
 			message: params.message,
 			model: params.model || this.config.models[0]?.id || "default",
 			signal: params.signal,
+			reasoningEffort: params.reasoningEffort,
 		};
 
 		const text = await this.sendViaDom(page, normalized);

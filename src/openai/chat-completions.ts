@@ -67,7 +67,11 @@ async function handleNonStreaming(
 	client: WebProviderClient,
 ): Promise<Response> {
 	try {
-		const stream = await client.sendMessage({ message: prompt, model });
+		const stream = await client.sendMessage({
+			message: prompt,
+			model,
+			reasoningEffort: body.reasoning_effort,
+		});
 		const result = await client.parseStream(stream);
 
 		const { content, toolCalls, finishReason } = hasTools
@@ -168,7 +172,11 @@ async function handleStreaming(
 	// client cannot parse as a ChatCompletionChunk.
 	let providerStream: ReadableStream<Uint8Array>;
 	try {
-		providerStream = await client.sendMessage({ message: prompt, model });
+		providerStream = await client.sendMessage({
+			message: prompt,
+			model,
+			reasoningEffort: body.reasoning_effort,
+		});
 	} catch (err) {
 		return providerErrorResponse(err, "streaming (pre-stream)");
 	}

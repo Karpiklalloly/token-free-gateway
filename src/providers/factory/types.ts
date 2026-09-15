@@ -1,3 +1,4 @@
+import type { ReasoningEffort } from "../model-spec.ts";
 import type { ModelInfo } from "../types.ts";
 
 /** Static configuration shared by all API-based providers. */
@@ -28,4 +29,5 @@ export interface NormalizedSendParams {
 	message: string;
 	model: string;
 	signal?: AbortSignal;
+	reasoningEffort?: ReasoningEffort;
 }
