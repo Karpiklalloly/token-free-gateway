@@ -185,10 +185,10 @@ refreshModels()
 		console.warn(`[models] Startup refresh failed: ${err instanceof Error ? err.message : String(err)}`);
 	});
 
-async function gracefulShutdown(signal: string) {
+function gracefulShutdown(signal: string) {
 	console.log(`\nReceived ${signal}, shutting down...`);
-	await BrowserManager.getInstance().shutdown();
 	server.stop(true);
+	void BrowserManager.getInstance().shutdown().catch(() => {});
 	process.exit(0);
 }
 process.on("SIGINT", () => gracefulShutdown("SIGINT"));
