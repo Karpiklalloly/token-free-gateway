@@ -19,6 +19,79 @@ describe("extractSingleToolCall", () => {
 		});
 	});
 
+	test("parses a tool_json block after explanatory text", () => {
+		const text = `I need to trace where ContentPart[] is converted/sent. Let me look at the request handling and provider clients.
+\`\`\`tool_json
+{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content|role === \\\"user\\\"|role: \\\"user\\\"","path":"C:\\\\Users\\\\artem\\\\OneDrive\\\\Рабочий стол\\\\token-free-gateway\\\\src","include":"*.ts"}}
+\`\`\``;
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "grep",
+			arguments: {
+				pattern: 'ContentPart|content as|\\.content|role === "user"|role: "user"',
+				path: "C:\\Users\\artem\\OneDrive\\Рабочий стол\\token-free-gateway\\src",
+				include: "*.ts",
+			},
+		});
+	});
+
+	test("parses DOM text when tool_json fences become Copy Download text", () => {
+		const text = `I need to trace where ContentPart[] is converted/sent. Let me look at the request handling and provider clients.
+tool_json
+Copy Download
+{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content","path":"C:\\\\Users\\\\artem\\\\OneDrive\\\\Рабочий стол\\\\token-free-gateway\\\\src","include":"*.ts"}}`;
+		expect(hasToolCall(text)).toBe(true);
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "grep",
+			arguments: {
+				pattern: "ContentPart|content as|\\.content",
+				path: "C:\\Users\\artem\\OneDrive\\Рабочий стол\\token-free-gateway\\src",
+				include: "*.ts",
+			},
+		});
+	});
+
+	test("parses DOM tool_json with nested braces inside edit strings", () => {
+		const payload = JSON.stringify({
+			tool: "edit",
+			parameters: {
+				filePath: "C:\\src\\converter.ts",
+				oldString: "function f() {\n\treturn { ok: true };\n}",
+				newString: "function f() {\n\treturn { ok: false };\n}",
+			},
+		});
+		const text = `Тесты проходят. Применяю.\ntool_json\nCopy\nDownload\n${payload}`;
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "edit",
+			arguments: JSON.parse(payload).parameters,
+		});
+	});
+
+	test("parses DOM tool_json with nested parameter objects", () => {
+		const payload = JSON.stringify({
+			tool: "edit",
+			parameters: { filePath: "C:\\src\\converter.ts", options: { selection: { start: 1, end: 2 } } },
+		});
+		const text = `tool_json Copy Download ${payload}`;
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "edit",
+			arguments: JSON.parse(payload).parameters,
+		});
+	});
+
+	test("preserves top-level arguments in a tool_json block", () => {
+		const text = `\`\`\`tool_json
+{"tool":"task","description":"Inspect images","prompt":"Explore the project","subagent_type":"explore"}
+\`\`\``;
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "task",
+			arguments: {
+				description: "Inspect images",
+				prompt: "Explore the project",
+				subagent_type: "explore",
+			},
+		});
+	});
+
 	test("parses bare JSON with tool/parameters", () => {
 		const text = 'I need to run a command. {"tool":"exec","parameters":{"command":"ls -la"}}';
 		const result = extractSingleToolCall(text);

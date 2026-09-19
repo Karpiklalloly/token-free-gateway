@@ -129,6 +129,11 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		const beforeText = (await messages.last().innerText().catch(() => "")).trim();
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
+		const inputDeadline = Date.now() + 30_000;
+		while (!(await input.isEditable().catch(() => false))) {
+			if (Date.now() >= inputDeadline) throw new Error("deepseek-web: message input did not become editable");
+			await page.waitForTimeout(250);
+		}
 		await input.click({ timeout: 10_000 });
 		await input.fill(params.message);
 		await page.keyboard.press("Enter");

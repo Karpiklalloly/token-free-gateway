@@ -4,7 +4,7 @@
  * Migrated from openclaw-zero-token web-tool-parser.ts.
  * Supports multiple formats (tried in order):
  * 1. Fenced: ```tool_json\n{"tool":"...","parameters":{...}}\n```
- * 2. Bare JSON: {"tool":"...","parameters":{...}}
+ * 2. Bare JSON: {"tool":"...","parameters":{...}} or {"tool":"...",...args}
  * 3. XML: <tool_call>{"name":"...","arguments":{...}}</tool_call>
  * 4. OpenAI-native: {"tool_calls":[{"name":"...","arguments":{...}}]}
  */
@@ -15,7 +15,6 @@ export interface ParsedToolCall {
 }
 
 const FENCED_REGEX = /```tool_json\s*\n?\s*(\{[\s\S]*\})\s*\n?\s*```/;
-const BARE_JSON_REGEX = /\{\s*"tool"\s*:\s*"([^"]+)"\s*,\s*"parameters"\s*:\s*(\{[\s\S]*?\})\s*\}/;
 const XML_TOOL_REGEX = /<tool_call[^>]*>([\s\S]*?)<\/tool_call>/;
 const OPENAI_TOOL_CALLS_REGEX =
 	/\{\s*"tool_calls"\s*:\s*\[\s*(\{[\s\S]*?\})\s*(?:,[\s\S]*?)?\]\s*\}/;
@@ -28,6 +27,34 @@ const DSML_INVOKE_REGEX =
 const DSML_PARAMETER_REGEX =
 	/<｜DSML｜parameter\b[^>]*\bname=(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/｜DSML｜parameter>/g;
 const DSML_INVOKE_DETECT_REGEX = /<｜DSML｜invoke\b[^>]*\bname=["']/;
+
+function extractBalancedJsonObject(text: string, start: number): string | null {
+	let depth = 0;
+	let inString = false;
+	let escaped = false;
+
+	for (let i = start; i < text.length; i++) {
+		const char = text[i];
+		if (inString) {
+			if (escaped) escaped = false;
+			else if (char === "\\") escaped = true;
+			else if (char === '"') inString = false;
+			continue;
+		}
+		if (char === '"') inString = true;
+		else if (char === "{") depth++;
+		else if (char === "}" && --depth === 0) return text.slice(start, i + 1);
+	}
+
+	return null;
+}
+
+function extractBareToolCall(text: string): ParsedToolCall | null {
+	const marker = /\{\s*"tool"\s*:/g.exec(text);
+	if (!marker || marker.index === undefined) return null;
+	const raw = extractBalancedJsonObject(text, marker.index);
+	return raw ? parseToolJson(raw) : null;
+}
 
 function extractDsmlToolCalls(text: string): ParsedToolCall[] {
 	const calls: ParsedToolCall[] = [];
@@ -85,14 +112,8 @@ export function extractSingleToolCall(text: string): ParsedToolCall | null {
 	if (openai?.[1]) return parseToolJson(openai[1]);
 
 	// 3. Bare JSON with tool/parameters
-	const bare = BARE_JSON_REGEX.exec(text);
-	if (bare?.[1] && bare?.[2]) {
-		try {
-			return { name: bare[1], arguments: JSON.parse(bare[2]) };
-		} catch {
-			return null;
-		}
-	}
+	const bare = extractBareToolCall(text);
+	if (bare) return bare;
 
 	// 4. XML format
 	const xml = XML_TOOL_REGEX.exec(text);
@@ -128,7 +149,11 @@ function parseToolJson(raw: string): ParsedToolCall | null {
 
 		// Format: {"tool":"name","parameters":{...}}
 		if (typeof obj.tool === "string") {
-			return { name: obj.tool, arguments: obj.parameters ?? {} };
+			const arguments_ =
+				obj.parameters === undefined
+					? Object.fromEntries(Object.entries(obj).filter(([key]) => key !== "tool"))
+					: (obj.parameters ?? {});
+			return { name: obj.tool, arguments: arguments_ };
 		}
 		// Format: {"name":"...","arguments":{...}}
 		if (typeof obj.name === "string") {
@@ -144,7 +169,7 @@ function parseToolJson(raw: string): ParsedToolCall | null {
 export function hasToolCall(text: string): boolean {
 	return (
 		FENCED_REGEX.test(text) ||
-		BARE_JSON_REGEX.test(text) ||
+		extractBareToolCall(text) !== null ||
 		XML_TOOL_REGEX.test(text) ||
 		OPENAI_TOOL_CALLS_REGEX.test(text) ||
 		DSML_INVOKE_DETECT_REGEX.test(text) ||

@@ -103,6 +103,7 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 		lastMessageText: "previous answer",
 		continueClicks: 0,
 		continueVisible: true,
+		inputReady: false,
 	};
 	const input = {
 		count: async () => 1,
@@ -110,7 +111,13 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 			return this;
 		},
 		click: async () => undefined,
+		isEditable: async () => {
+			const ready = state.inputReady;
+			state.inputReady = true;
+			return ready;
+		},
 		fill: async (value: string) => {
+			if (!state.inputReady) throw new Error("input is not editable");
 			state.filled = value;
 		},
 	};
