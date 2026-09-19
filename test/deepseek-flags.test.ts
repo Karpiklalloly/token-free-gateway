@@ -87,6 +87,11 @@ test("DeepSeekWebClient keeps dedicated pages separate by conversation", async (
 	expect(userPageTouched).toBe(false);
 });
 
+test("DeepSeekWebClient rejects requests without an OpenCode chat ID", async () => {
+	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
+	await expect(client.sendMessage({ message: "task" })).rejects.toMatchObject({ httpStatus: 400 });
+});
+
 test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
 	const state = { filled: "", messageCount: 0, continueClicks: 0, continueVisible: true };
