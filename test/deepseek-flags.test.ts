@@ -76,3 +76,86 @@ test("DeepSeekWebClient creates a dedicated page instead of using a user tab", a
 	expect(newPageCalls).toBe(1);
 	expect(userPageTouched).toBe(false);
 });
+
+test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {
+	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
+	const state = { typed: "", messageCount: 0, continueClicks: 0, continueVisible: true };
+	const input = {
+		count: async () => 1,
+		first() {
+			return this;
+		},
+		click: async () => undefined,
+		elementHandle: async () => ({ innerText: async () => state.typed }),
+	};
+	const assistant = {
+		locator: () => ({
+			last: () => ({ innerText: async () => "completed answer" }),
+		}),
+		innerText: async () => "completed answer",
+	};
+	const page = {
+		locator: (selector: string) => {
+			if (selector.includes("textarea")) return input;
+			return {
+				count: async () => state.messageCount,
+				last: () => assistant,
+			};
+		},
+		getByRole: () => ({
+			last: () => ({
+				isVisible: async () => state.continueVisible,
+				click: async () => {
+					state.continueClicks++;
+					state.continueVisible = false;
+				},
+			}),
+		}),
+		evaluate: async (_fn: unknown, value?: unknown) => {
+			if (typeof value === "string") state.typed = value;
+			return "";
+		},
+		waitForFunction: async () => undefined,
+		waitForTimeout: async () => undefined,
+		keyboard: {
+			press: async () => {
+				state.messageCount = 2;
+			},
+		},
+	};
+	const internals = client as unknown as { getPage: () => Promise<unknown> };
+	internals.getPage = async () => page;
+
+	const result = await client.parseStream(await client.sendMessage({ message: "task" }));
+
+	expect(result.text).toBe("completed answer");
+	expect(state.continueClicks).toBe(1);
+	expect(state.typed).toBe("task");
+});
+
+test("DeepSeekWebClient serializes requests to its dedicated page", async () => {
+	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
+	const submitted: string[] = [];
+	let releaseFirst: (value: string) => void = () => {};
+	const internals = client as unknown as {
+		getPage: () => Promise<unknown>;
+		sendViaDom: (_page: unknown, params: { message: string }) => Promise<string>;
+	};
+	internals.getPage = async () => ({});
+	internals.sendViaDom = async (_page, params) => {
+		submitted.push(params.message);
+		if (params.message === "first") return new Promise<string>((resolve) => (releaseFirst = resolve));
+		return "second answer";
+	};
+
+	const first = client.sendMessage({ message: "first" });
+	await Promise.resolve();
+	const second = client.sendMessage({ message: "second" });
+	await Promise.resolve();
+
+	expect(submitted).toEqual(["first"]);
+	releaseFirst("first answer");
+	await first;
+	await second;
+	expect(submitted).toEqual(["first", "second"]);
+});

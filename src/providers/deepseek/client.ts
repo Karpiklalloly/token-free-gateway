@@ -1,5 +1,6 @@
 import type { Page } from "playwright-core";
 import { BrowserManager } from "../../browser/manager.ts";
+import { pasteText } from "../../browser/dom-input.ts";
 import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
 import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
@@ -37,7 +38,11 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 			{ id: "deepseek-reasoner:no-think", name: "DeepSeek Reasoner (no thinking)" },
 			{ id: "deepseek-reasoner:search-off", name: "DeepSeek Reasoner (no search)" },
 		],
+		pollIntervalMs: 750,
+		maxWaitMs: 300_000,
+		stabilityThreshold: 2,
 	};
+	private tail: Promise<void> = Promise.resolve();
 
 	protected getCookies() {
 		return parseCookieHeader(this.auth.cookie || "", this.config.cookieDomain);
@@ -66,8 +71,80 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		this.page = null;
 	}
 
-	protected async sendViaDom(_page: Page, _params: NormalizedSendParams): Promise<string> {
-		throw new Error("DeepSeek DOM send is not implemented");
+	override async sendMessage(params: {
+		message: string;
+		model?: string;
+		signal?: AbortSignal;
+		reasoningEffort?: ReasoningEffort;
+	}): Promise<ReadableStream<Uint8Array>> {
+		const previous = this.tail;
+		let release!: () => void;
+		this.tail = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		await previous;
+		try {
+			return await super.sendMessage(params);
+		} finally {
+			release();
+		}
+	}
+
+	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
+		const beforeCount = await page.locator(".ds-message").count();
+		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
+		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
+		const inputHandle = await input.elementHandle();
+		if (!inputHandle) throw new Error("deepseek-web: message input disappeared");
+		await input.click({ timeout: 10_000 });
+		await pasteText(page, params.message, inputHandle);
+		await page.keyboard.press("Enter");
+
+		await page.waitForFunction(
+			(previousMessages) => document.querySelectorAll(".ds-message").length > previousMessages + 1,
+			beforeCount,
+			{ timeout: this.config.maxWaitMs, polling: 500 },
+		);
+
+		const message = page.locator(".ds-message").last();
+		const interval = this.config.pollIntervalMs ?? 750;
+		const maxWait = this.config.maxWaitMs ?? 300_000;
+		const threshold = this.config.stabilityThreshold ?? 2;
+		let lastText = "";
+		let stableCount = 0;
+
+		for (let elapsed = 0; elapsed < maxWait; elapsed += interval) {
+			if (params.signal?.aborted) throw new Error("deepseek-web request aborted");
+			const continueButton = page.getByRole("button", { name: /^Continue$/i }).last();
+			if (await continueButton.isVisible().catch(() => false)) {
+				await continueButton.click({ timeout: 10_000 });
+				lastText = "";
+				stableCount = 0;
+				await page.waitForTimeout(interval);
+				continue;
+			}
+
+			const markdown = message.locator(".ds-markdown").last();
+			const text = (
+				(await markdown.innerText().catch(() => "")) || (await message.innerText().catch(() => ""))
+			).trim();
+			if (text && text !== params.message) {
+				if (text === lastText) {
+					stableCount++;
+					if (stableCount >= threshold) return text;
+				} else {
+					lastText = text;
+					stableCount = 0;
+				}
+			}
+			await page.waitForTimeout(interval);
+		}
+
+		throw new Error("deepseek-web: response did not settle before timeout");
+	}
+
+	protected override formatSsePayload(text: string): string {
+		return `data: ${JSON.stringify({ v: text })}\n\n`;
 	}
 
 	protected parseStreamImpl(
