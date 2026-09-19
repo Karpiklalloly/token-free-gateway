@@ -14,9 +14,9 @@ Give every OpenCode/Hermes chat its own DeepSeek conversation automatically.  Re
 
 ## Identity Contract
 
-The gateway needs a stable, per-chat opaque key from OpenCode/Hermes.  A new key means a new DeepSeek chat; the same key means the existing DeepSeek chat.
+OpenCode's `chat.headers` hook receives its stable `sessionID` for every model request.  A project plugin at `.opencode/plugins/deepseek-chat-routing.ts` will forward it in `X-TFG-Conversation-ID` only for the two gateway providers, `pricol` and `prikol1`. A new ID means a new DeepSeek chat; the same ID means the existing DeepSeek chat.
 
-The first implementation step is a read-only capture of a real OpenCode/Hermes request.  It must establish which request field supplies that key.  The gateway will accept an explicit session identity only; it will not infer one from content.  If the client does not send a stable per-chat key, the required next change is an OpenCode/Hermes adapter configuration or integration that sends one automatically with every request.
+The gateway accepts that explicit header only; it does not infer an identity from content.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ The persistent `deepseek-chat-routes.json` store, located next to the existing a
 
 ## Request Flow
 
-1. OpenCode/Hermes sends a completion request with its stable chat key.
+1. The OpenCode plugin adds the stable chat key to a completion request.
 2. The gateway resolves that key to a DeepSeek page or creates a new client-owned page.
 3. It sends the request, automatically presses `Continue` when required, and waits for a settled answer.
 4. After DeepSeek navigates to its conversation URL, the gateway persists the URL for that key.

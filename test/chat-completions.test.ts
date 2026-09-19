@@ -26,6 +26,27 @@ function createMockClient(responseText: string) {
 }
 
 describe("chat completions handler (unit)", () => {
+	test("forwards a conversation ID to the provider", async () => {
+		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
+		let receivedConversationId: string | undefined;
+		const client = {
+			...createMockClient("Hello"),
+			sendMessage: async (params: { conversationId?: string }) => {
+				receivedConversationId = params.conversationId;
+				return createMockClient("Hello").sendMessage();
+			},
+		};
+
+		const response = await handleChatCompletions(
+			{ model: "test", messages: [{ role: "user", content: "Hi" }] },
+			client as any,
+			{ conversationId: "ses_chat_a" } as any,
+		);
+
+		expect(response.status).toBe(200);
+		expect(receivedConversationId).toBe("ses_chat_a");
+	});
+
 	test("rejects empty messages", async () => {
 		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
 		const client = createMockClient("Hello");

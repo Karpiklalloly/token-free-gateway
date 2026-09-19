@@ -30,4 +30,5 @@ export interface NormalizedSendParams {
 	model: string;
 	signal?: AbortSignal;
 	reasoningEffort?: ReasoningEffort;
+	conversationId?: string;
 }

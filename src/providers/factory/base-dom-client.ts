@@ -66,6 +66,7 @@ export abstract class BaseDomClient<TAuth = unknown> implements WebProviderClien
 		model?: string;
 		signal?: AbortSignal;
 		reasoningEffort?: ReasoningEffort;
+		conversationId?: string;
 	}): Promise<ReadableStream<Uint8Array>> {
 		const page = await this.getPage();
 		const normalized: NormalizedSendParams = {
@@ -73,6 +74,7 @@ export abstract class BaseDomClient<TAuth = unknown> implements WebProviderClien
 			model: params.model || this.config.models[0]?.id || "default",
 			signal: params.signal,
 			reasoningEffort: params.reasoningEffort,
+			conversationId: params.conversationId,
 		};
 
 		const text = await this.sendViaDom(page, normalized);

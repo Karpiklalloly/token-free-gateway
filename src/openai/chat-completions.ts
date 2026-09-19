@@ -13,6 +13,10 @@ import type {
 let _routeTimeoutMs = 300_000;
 const SUPERPOWERS_BOOTSTRAP = /<EXTREMELY_IMPORTANT>\s*You have superpowers\.[\s\S]*?<\/EXTREMELY_IMPORTANT>\s*/g;
 
+export interface ChatCompletionContext {
+	conversationId?: string;
+}
+
 export function setRouteTimeoutSec(sec: number): void {
 	_routeTimeoutMs = sec * 1000;
 }
@@ -80,6 +84,7 @@ function delegateBrainstormingToTask(
 export async function handleChatCompletions(
 	body: ChatCompletionRequest,
 	client: WebProviderClient,
+	context: ChatCompletionContext = {},
 ): Promise<Response> {
 	if (!body.messages || body.messages.length === 0) {
 		return jsonError("messages is required and must not be empty", 400);
@@ -98,8 +103,8 @@ export async function handleChatCompletions(
 	}
 
 	const handler = body.stream
-		? handleStreaming(id, model, prompt, hasTools, body, client)
-		: handleNonStreaming(id, model, prompt, hasTools, body, client);
+		? handleStreaming(id, model, prompt, hasTools, body, client, context)
+		: handleNonStreaming(id, model, prompt, hasTools, body, client, context);
 
 	const timeout = new Promise<Response>((resolve) =>
 		setTimeout(() => {
@@ -118,12 +123,14 @@ async function handleNonStreaming(
 	hasTools: boolean,
 	body: ChatCompletionRequest,
 	client: WebProviderClient,
+	context: ChatCompletionContext,
 ): Promise<Response> {
 	try {
 		const stream = await client.sendMessage({
 			message: prompt,
 			model,
 			reasoningEffort: body.reasoning_effort,
+			conversationId: context.conversationId,
 		});
 		const result = await client.parseStream(stream);
 
@@ -222,6 +229,7 @@ async function handleStreaming(
 	hasTools: boolean,
 	body: ChatCompletionRequest,
 	client: WebProviderClient,
+	context: ChatCompletionContext,
 ): Promise<Response> {
 	// Await sendMessage BEFORE creating the SSE stream so that pre-stream
 	// errors (auth, rate-limit, model-not-available) return a proper HTTP
@@ -233,6 +241,7 @@ async function handleStreaming(
 			message: prompt,
 			model,
 			reasoningEffort: body.reasoning_effort,
+			conversationId: context.conversationId,
 		});
 	} catch (err) {
 		return providerErrorResponse(err, "streaming (pre-stream)");

@@ -43,9 +43,10 @@ export interface WebProviderClient {
 	sendMessage(params: {
 		message: string;
 		model?: string;
-		signal?: AbortSignal;
-		reasoningEffort?: ReasoningEffort;
-	}): Promise<ReadableStream<Uint8Array>>;
+	signal?: AbortSignal;
+	reasoningEffort?: ReasoningEffort;
+	conversationId?: string;
+}): Promise<ReadableStream<Uint8Array>>;
 	parseStream(
 		body: ReadableStream<Uint8Array>,
 		onDelta?: (delta: string) => void,
