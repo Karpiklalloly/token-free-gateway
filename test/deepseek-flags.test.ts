@@ -79,14 +79,16 @@ test("DeepSeekWebClient creates a dedicated page instead of using a user tab", a
 
 test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
-	const state = { typed: "", messageCount: 0, continueClicks: 0, continueVisible: true };
+	const state = { filled: "", messageCount: 0, continueClicks: 0, continueVisible: true };
 	const input = {
 		count: async () => 1,
 		first() {
 			return this;
 		},
 		click: async () => undefined,
-		elementHandle: async () => ({ innerText: async () => state.typed }),
+		fill: async (value: string) => {
+			state.filled = value;
+		},
 	};
 	const assistant = {
 		locator: () => ({
@@ -111,10 +113,7 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 				},
 			}),
 		}),
-		evaluate: async (_fn: unknown, value?: unknown) => {
-			if (typeof value === "string") state.typed = value;
-			return "";
-		},
+		evaluate: async () => "",
 		waitForFunction: async () => undefined,
 		waitForTimeout: async () => undefined,
 		keyboard: {
@@ -130,7 +129,7 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 
 	expect(result.text).toBe("completed answer");
 	expect(state.continueClicks).toBe(1);
-	expect(state.typed).toBe("task");
+	expect(state.filled).toBe("task");
 });
 
 test("DeepSeekWebClient serializes requests to its dedicated page", async () => {

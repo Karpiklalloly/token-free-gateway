@@ -1,6 +1,5 @@
 import type { Page } from "playwright-core";
 import { BrowserManager } from "../../browser/manager.ts";
-import { pasteText } from "../../browser/dom-input.ts";
 import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
 import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
@@ -94,10 +93,8 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		const beforeCount = await page.locator(".ds-message").count();
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
-		const inputHandle = await input.elementHandle();
-		if (!inputHandle) throw new Error("deepseek-web: message input disappeared");
 		await input.click({ timeout: 10_000 });
-		await pasteText(page, params.message, inputHandle);
+		await input.fill(params.message);
 		await page.keyboard.press("Enter");
 
 		await page.waitForFunction(
