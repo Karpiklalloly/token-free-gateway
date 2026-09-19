@@ -130,6 +130,85 @@ describe("chat completions response format", () => {
 		expect(json.choices[0]?.message.tool_calls?.[0]?.function.name).toBe("exec");
 	});
 
+	test("returns OpenCode task calls for subagent delegation", async () => {
+		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
+		const mockClient = createMockClient(
+			'```tool_json\n{"tool":"task","parameters":{"description":"Inspect project","prompt":"Inspect the project and report its structure.","subagent_type":"general"}}\n```',
+		);
+		const body: ChatCompletionRequest = {
+			model: "test",
+			messages: [{ role: "user", content: "Delegate project inspection" }],
+			tools: [
+				{
+					type: "function",
+					function: {
+						name: "task",
+						description: "Launch a subagent",
+						parameters: {
+							type: "object",
+							properties: {
+								description: { type: "string" },
+								prompt: { type: "string" },
+								subagent_type: { type: "string" },
+							},
+							required: ["description", "prompt", "subagent_type"],
+						},
+					},
+				},
+			],
+		};
+
+		const response = await handleChatCompletions(body, mockClient as any);
+		const json = (await response.json()) as ChatCompletionResponse;
+		const task = json.choices[0]?.message.tool_calls?.[0];
+		expect(json.choices[0]?.finish_reason).toBe("tool_calls");
+		expect(task?.function.name).toBe("task");
+		expect(JSON.parse(task?.function.arguments ?? "{}")).toEqual({
+			description: "Inspect project",
+			prompt: "Inspect the project and report its structure.",
+			subagent_type: "general",
+		});
+	});
+
+	test("delegates a DeepSeek brainstorming call to an OpenCode subagent", async () => {
+		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
+		const mockClient = createMockClient(
+			'```tool_json\n{"tool":"skill","parameters":{"name":"brainstorming"}}\n```',
+		);
+		const body: ChatCompletionRequest = {
+			model: "deepseek-chat",
+			messages: [
+				{
+					role: "user",
+					content:
+						"<EXTREMELY_IMPORTANT>\nYou have superpowers.\n</EXTREMELY_IMPORTANT>\nImplement the requested feature",
+				},
+			],
+			tools: [
+				{
+					type: "function",
+					function: { name: "skill", parameters: { type: "object" } },
+				},
+				{
+					type: "function",
+					function: { name: "task", parameters: { type: "object" } },
+				},
+			],
+		};
+
+		const response = await handleChatCompletions(body, mockClient as any);
+		const json = (await response.json()) as ChatCompletionResponse;
+		const task = json.choices[0]?.message.tool_calls?.[0];
+		expect(json.choices[0]?.finish_reason).toBe("tool_calls");
+		expect(task?.function.name).toBe("task");
+		expect(JSON.parse(task?.function.arguments ?? "{}")).toEqual({
+			description: "Complete user task",
+			prompt:
+				"Complete the following task independently and return the result to the parent agent:\n\nImplement the requested feature",
+			subagent_type: "general",
+		});
+	});
+
 	test("multi-turn tool flow (step 4: tool result → final answer)", async () => {
 		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
 		const mockClient = createMockClient("The directory contains file1.txt and file2.txt.");

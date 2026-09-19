@@ -11,6 +11,7 @@ import type {
 } from "./types.ts";
 
 let _routeTimeoutMs = 300_000;
+const SUPERPOWERS_BOOTSTRAP = /<EXTREMELY_IMPORTANT>\s*You have superpowers\.[\s\S]*?<\/EXTREMELY_IMPORTANT>\s*/g;
 
 export function setRouteTimeoutSec(sec: number): void {
 	_routeTimeoutMs = sec * 1000;
@@ -22,6 +23,58 @@ function generateId(): string {
 
 function estimateTokens(text: string): number {
 	return Math.ceil(text.length / 4);
+}
+
+function latestUserTask(messages: ChatCompletionRequest["messages"]): string {
+	for (let i = messages.length - 1; i >= 0; i--) {
+		const message = messages[i];
+		if (message?.role !== "user") continue;
+		const text =
+			typeof message.content === "string"
+				? message.content
+				: message.content
+						.filter((part) => part.type === "text")
+						.map((part) => part.text ?? "")
+						.join("");
+		return text.replace(SUPERPOWERS_BOOTSTRAP, "").trim();
+	}
+	return "Continue the user task.";
+}
+
+function delegateBrainstormingToTask(
+	toolCalls: ToolCallOutput[] | undefined,
+	body: ChatCompletionRequest,
+): ToolCallOutput[] | undefined {
+	if (
+		toolCalls?.length !== 1 ||
+		toolCalls[0]?.function.name !== "skill" ||
+		!body.tools?.some((tool) => tool.function.name === "task")
+	) {
+		return undefined;
+	}
+
+	try {
+		const args = JSON.parse(toolCalls[0].function.arguments) as { name?: string };
+		if (args.name !== "brainstorming") return undefined;
+	} catch {
+		return undefined;
+	}
+
+	const task = latestUserTask(body.messages);
+	return [
+		{
+			id: `call_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`,
+			type: "function",
+			function: {
+				name: "task",
+				arguments: JSON.stringify({
+					description: "Complete user task",
+					prompt: `Complete the following task independently and return the result to the parent agent:\n\n${task}`,
+					subagent_type: "general",
+				}),
+			},
+		},
+	];
 }
 
 export async function handleChatCompletions(
@@ -74,9 +127,13 @@ async function handleNonStreaming(
 		});
 		const result = await client.parseStream(stream);
 
-		const { content, toolCalls, finishReason } = hasTools
+		const parsed = hasTools
 			? parseToolResponse(result.text, body.tools)
 			: { content: result.text, toolCalls: undefined, finishReason: "stop" as const };
+		const delegatedToolCalls = delegateBrainstormingToTask(parsed.toolCalls, body);
+		const content = delegatedToolCalls ? null : parsed.content;
+		const toolCalls = delegatedToolCalls ?? parsed.toolCalls;
+		const finishReason = delegatedToolCalls ? "tool_calls" : parsed.finishReason;
 
 		const promptTokens = estimateTokens(prompt);
 		const completionTokens = estimateTokens(result.text);
@@ -229,7 +286,11 @@ async function streamWithTools(
 	client: WebProviderClient,
 ) {
 	const result = await client.parseStream(providerStream);
-	const { content, toolCalls, finishReason } = parseToolResponse(result.text, body.tools);
+	const parsed = parseToolResponse(result.text, body.tools);
+	const delegatedToolCalls = delegateBrainstormingToTask(parsed.toolCalls, body);
+	const content = delegatedToolCalls ? null : parsed.content;
+	const toolCalls = delegatedToolCalls ?? parsed.toolCalls;
+	const finishReason = delegatedToolCalls ? "tool_calls" : parsed.finishReason;
 
 	if (finishReason === "tool_calls" && toolCalls) {
 		emitToolCallDeltas(w, id, model, toolCalls);
