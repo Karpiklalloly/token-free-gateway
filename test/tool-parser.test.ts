@@ -65,6 +65,18 @@ describe("extractSingleToolCall", () => {
 		});
 	});
 
+	test("parses DeepSeek DSML invocation", () => {
+		const text = `<｜DSML｜calls><｜DSML｜invoke name="task"><｜DSML｜parameter name="description" string="true">Find tab-opening logic</｜DSML｜parameter><｜DSML｜parameter name="prompt" string="true">Explore the codebase</｜DSML｜parameter><｜DSML｜parameter name="subagent_type" string="true">explore</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜calls>`;
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "task",
+			arguments: {
+				description: "Find tab-opening logic",
+				prompt: "Explore the codebase",
+				subagent_type: "explore",
+			},
+		});
+	});
+
 	test("returns null for plain text", () => {
 		const text = "Hello, I'm just a regular response with no tool calls.";
 		expect(extractSingleToolCall(text)).toBeNull();

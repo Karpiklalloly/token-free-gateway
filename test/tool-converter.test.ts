@@ -268,6 +268,26 @@ describe("parseToolResponse", () => {
 		});
 	});
 
+	test("converts DeepSeek DSML task invocation into tool_calls", () => {
+		const taskTool: ToolDefinition = {
+			type: "function",
+			function: {
+				name: "task",
+				description: "Delegate work to a subagent",
+				parameters: { type: "object", properties: {} },
+			},
+		};
+		const text = `<｜DSML｜calls><｜DSML｜invoke name="task"><｜DSML｜parameter name="description" string="true">Find tab-opening logic</｜DSML｜parameter><｜DSML｜parameter name="subagent_type" string="true">explore</｜DSML｜parameter></｜DSML｜invoke></｜DSML｜calls>`;
+		const result = parseToolResponse(text, [taskTool]);
+		expect(result.finishReason).toBe("tool_calls");
+		expect(result.content).toBeNull();
+		expect(result.toolCalls?.[0]?.function.name).toBe("task");
+		expect(JSON.parse(result.toolCalls?.[0]?.function.arguments ?? "{}")).toEqual({
+			description: "Find tab-opening logic",
+			subagent_type: "explore",
+		});
+	});
+
 	test("fuzzy-matches Calling hint to run_terminal tool", () => {
 		const terminalTools: ToolDefinition[] = [
 			{

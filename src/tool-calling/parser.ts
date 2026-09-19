@@ -23,6 +23,23 @@ const OPENAI_TOOL_CALLS_REGEX =
 // [Calling terminal with command: ls -la "D:/x/"]
 const BRACKET_CALL_REGEX =
 	/\[\s*Calling\s+([A-Za-z_][\w-]*)\s+with\s+command\s*:\s*([\s\S]*?)\s*\]/i;
+const DSML_INVOKE_REGEX =
+	/<｜DSML｜invoke\b[^>]*\bname=(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/｜DSML｜invoke>/g;
+const DSML_PARAMETER_REGEX =
+	/<｜DSML｜parameter\b[^>]*\bname=(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/｜DSML｜parameter>/g;
+const DSML_INVOKE_DETECT_REGEX = /<｜DSML｜invoke\b[^>]*\bname=["']/;
+
+function extractDsmlToolCalls(text: string): ParsedToolCall[] {
+	const calls: ParsedToolCall[] = [];
+	for (const invoke of text.matchAll(DSML_INVOKE_REGEX)) {
+		const arguments_: Record<string, unknown> = {};
+		for (const parameter of (invoke[3] ?? "").matchAll(DSML_PARAMETER_REGEX)) {
+			arguments_[parameter[2] ?? ""] = (parameter[3] ?? "").trim();
+		}
+		if (invoke[2]) calls.push({ name: invoke[2], arguments: arguments_ });
+	}
+	return calls;
+}
 
 export function extractToolCalls(text: string): ParsedToolCall[] {
 	// Try extracting multiple fenced tool_json blocks first
@@ -47,6 +64,9 @@ export function extractToolCalls(text: string): ParsedToolCall[] {
 		if (calls.length > 0) return calls;
 	}
 
+	const dsmlCalls = extractDsmlToolCalls(text);
+	if (dsmlCalls.length > 0) return dsmlCalls;
+
 	// Try single extraction (fallback)
 	const single = extractSingleToolCall(text);
 	return single ? [single] : [];
@@ -56,6 +76,9 @@ export function extractSingleToolCall(text: string): ParsedToolCall | null {
 	// 1. Fenced code block
 	const fenced = FENCED_REGEX.exec(text);
 	if (fenced?.[1]) return parseToolJson(fenced[1]);
+
+	const dsml = extractDsmlToolCalls(text);
+	if (dsml[0]) return dsml[0];
 
 	// 2. OpenAI-style tool_calls array
 	const openai = OPENAI_TOOL_CALLS_REGEX.exec(text);
@@ -124,6 +147,7 @@ export function hasToolCall(text: string): boolean {
 		BARE_JSON_REGEX.test(text) ||
 		XML_TOOL_REGEX.test(text) ||
 		OPENAI_TOOL_CALLS_REGEX.test(text) ||
+		DSML_INVOKE_DETECT_REGEX.test(text) ||
 		BRACKET_CALL_REGEX.test(text)
 	);
 }
