@@ -23,7 +23,10 @@ export async function pasteText(
 
 	const actual = inputHandle
 		? await inputHandle.innerText().catch(() => "")
-		: await page.evaluate(() => (document.activeElement as HTMLElement)?.innerText ?? "");
+		: await page.evaluate(() => {
+				const el = document.activeElement as (HTMLTextAreaElement & HTMLElement) | null;
+				return el?.value ?? el?.innerText ?? "";
+			});
 
 	if (actual.trim().length >= Math.min(text.length * 0.5, 20)) {
 		return;

@@ -31,7 +31,7 @@ async function main() {
 	if (!(await isChromeReady())) {
 		console.log("Chrome debug mode is not running. Starting Chrome automatically...\n");
 		const { startChrome } = await import("./chrome.ts");
-		await startChrome();
+		await startChrome(true);
 		const rl0 = createInterface({ input: process.stdin, output: process.stdout });
 		await question(
 			rl0,

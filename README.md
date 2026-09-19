@@ -245,11 +245,11 @@ TFG_REQUEST_TIMEOUT_SEC=300
 
 ---
 
-## OpenCode / Hermes DeepSeek chats
+## Persistent DeepSeek chats
 
-When OpenCode is run from this project, `.opencode/plugins/deepseek-chat-routing.ts` automatically sends its chat ID to the gateway for the `pricol` and `prikol1` providers. Each OpenCode/Hermes chat then receives its own client-owned DeepSeek tab and retains the same DeepSeek conversation after a gateway restart. The URL mapping is kept next to the local auth profile; existing browser tabs are never used.
+DeepSeek keeps one browser conversation per client-provided `X-TFG-Conversation-ID`. Any OpenAI-compatible client can send this header; the project OpenCode plugin adds it automatically for the `pricol` and `prikol1` providers. Each ID receives its own client-owned DeepSeek tab and retains the same DeepSeek conversation after a gateway restart. The URL mapping is kept next to the local auth profile; existing browser tabs are never used.
 
-Use port `3456` as usual. Requests that bypass the OpenCode plugin are rejected for DeepSeek rather than being routed to the wrong conversation.
+Use port `3456` as usual. Requests without the header are rejected for DeepSeek rather than being routed to the wrong conversation.
 
 ---
 

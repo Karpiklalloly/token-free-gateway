@@ -143,15 +143,15 @@ export class GlmIntlWebClient extends BaseDomClient<GlmIntlWebAuth> {
 		const beforeCount = await page.locator(".chat-assistant").count();
 
 		let sent = false;
-		const textarea = page.locator("textarea").first();
+		const textarea = page.locator("textarea:visible").first();
 		if ((await textarea.count()) > 0) {
 			await textarea.click({ timeout: 5000 });
-			await textarea.fill(params.message);
-			await textarea.press("Enter");
+			await pasteText(page, params.message);
+			await page.keyboard.press("Enter");
 			sent = true;
 		}
 		if (!sent) {
-			const editable = page.locator('[contenteditable="true"]').first();
+			const editable = page.locator('[contenteditable="true"]:visible').first();
 			if ((await editable.count()) > 0) {
 				await editable.click({ timeout: 5000 });
 				await pasteText(page, params.message);
@@ -160,7 +160,7 @@ export class GlmIntlWebClient extends BaseDomClient<GlmIntlWebAuth> {
 			}
 		}
 		if (!sent) {
-			const input = page.locator('input[type="text"]').first();
+			const input = page.locator('input[type="text"]:visible').first();
 			if ((await input.count()) > 0) {
 				await input.click({ timeout: 5000 });
 				await input.fill(params.message);
@@ -183,8 +183,7 @@ export class GlmIntlWebClient extends BaseDomClient<GlmIntlWebAuth> {
 				(prev) => document.querySelectorAll(".chat-assistant").length > prev,
 				beforeCount,
 				{ timeout: 120000, polling: 500 },
-			)
-			.catch(() => {});
+			);
 
 		return this.pollForStableText(async () => {
 			return page.evaluate(() => {

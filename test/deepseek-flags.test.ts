@@ -87,9 +87,12 @@ test("DeepSeekWebClient keeps dedicated pages separate by conversation", async (
 	expect(userPageTouched).toBe(false);
 });
 
-test("DeepSeekWebClient rejects requests without an OpenCode chat ID", async () => {
+test("DeepSeekWebClient rejects requests without a chat ID", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
-	await expect(client.sendMessage({ message: "task" })).rejects.toMatchObject({ httpStatus: 400 });
+	await expect(client.sendMessage({ message: "task" })).rejects.toMatchObject({
+		httpStatus: 400,
+		message: "DeepSeek routing requires a chat identifier",
+	});
 });
 
 test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {

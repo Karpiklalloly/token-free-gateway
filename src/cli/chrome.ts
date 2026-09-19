@@ -1,23 +1,24 @@
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { listAuthorizedProviders } from "../providers/auth-store.ts";
 
-/** All web AI provider login pages to open at startup */
-const PROVIDER_URLS = [
-	"https://claude.ai/new",
-	"https://chatgpt.com",
-	"https://chat.deepseek.com/",
-	"https://www.doubao.com/chat/",
-	"https://chat.qwen.ai",
-	"https://www.qianwen.com",
-	"https://www.kimi.com",
-	"https://gemini.google.com/app",
-	"https://grok.com",
-	"https://chatglm.cn",
-	"https://chat.z.ai/",
-	"https://www.perplexity.ai",
-	"https://aistudio.xiaomimimo.com",
-];
+/** All web AI provider login pages, keyed by provider id */
+const PROVIDER_URLS: Record<string, string> = {
+	claude: "https://claude.ai/new",
+	chatgpt: "https://chatgpt.com",
+	deepseek: "https://chat.deepseek.com/",
+	doubao: "https://www.doubao.com/chat/",
+	qwen: "https://chat.qwen.ai",
+	"qwen-cn": "https://www.qianwen.com",
+	kimi: "https://www.kimi.com",
+	gemini: "https://gemini.google.com/app",
+	grok: "https://grok.com",
+	glm: "https://chatglm.cn",
+	"glm-intl": "https://chat.z.ai/",
+	perplexity: "https://www.perplexity.ai",
+	xiaomimo: "https://aistudio.xiaomimimo.com",
+};
 
 const CDP_PORT = 9222;
 
@@ -100,7 +101,7 @@ async function isCdpAlreadyRunning(port: number): Promise<boolean> {
 	}
 }
 
-export async function startChrome() {
+export async function startChrome(openAllTabs = false) {
 	if (await isCdpAlreadyRunning(CDP_PORT)) {
 		console.log(`Chrome debug is already running on port ${CDP_PORT}.`);
 		console.log("Run 'token-free-gateway chrome stop' to stop the existing instance first.");
@@ -125,6 +126,11 @@ export async function startChrome() {
 	console.log(`  CDP     : http://127.0.0.1:${CDP_PORT}`);
 	console.log("");
 
+	const authorized = listAuthorizedProviders();
+	const urls = openAllTabs
+		? Object.values(PROVIDER_URLS)
+		: authorized.map((id) => PROVIDER_URLS[id]).filter((u): u is string => Boolean(u));
+
 	const flags = [
 		`--remote-debugging-port=${CDP_PORT}`,
 		`--user-data-dir=${userDataDir}`,
@@ -135,7 +141,7 @@ export async function startChrome() {
 		"--disable-translate",
 		"--disable-features=TranslateUI",
 		"--remote-allow-origins=*",
-		...PROVIDER_URLS,
+		...urls,
 	];
 
 	const proc = Bun.spawn({

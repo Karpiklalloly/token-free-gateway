@@ -91,7 +91,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 	}): Promise<ReadableStream<Uint8Array>> {
 		const conversationId = params.conversationId;
 		if (!conversationId) {
-			throw new ProviderApiError(400, "DeepSeek routing requires an OpenCode/Hermes chat identifier");
+			throw new ProviderApiError(400, "DeepSeek routing requires a chat identifier");
 		}
 
 		const previous = this.tails.get(conversationId) ?? Promise.resolve();
