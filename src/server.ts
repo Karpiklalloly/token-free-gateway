@@ -3,6 +3,7 @@ import { BrowserManager } from "./browser/manager.ts";
 import { loadConfig } from "./config.ts";
 import { handleChatCompletions, setRouteTimeoutSec } from "./openai/chat-completions.ts";
 import { resolveConversationKey } from "./openai/conversation-key.ts";
+import { formatChatTrace } from "./openai/chat-trace.ts";
 import { listAuthorizedProviders } from "./providers/auth-store.ts";
 import {
 	checkAllSessions,
@@ -105,9 +106,18 @@ async function handleChatCompletionsRoute(req: Request): Promise<Response> {
 			{ status: 400 },
 		);
 	}
+	const startedAt = Date.now();
+	const conversationId = resolveConversationKey(req);
+	const trace = {
+		id: crypto.randomUUID().slice(0, 8),
+		conversationId,
+		model: body.model || "",
+		stream: Boolean(body.stream),
+	};
+	console.log(formatChatTrace(trace, { event: "received" }));
 	const provider = await getClientForModel(body.model || "");
 	if (!provider) {
-		return Response.json(
+		const response = Response.json(
 			{
 				error: {
 					message: `No authorized provider found for model "${body.model || ""}". Run 'token-free-gateway webauth' to authorize providers.`,
@@ -116,9 +126,28 @@ async function handleChatCompletionsRoute(req: Request): Promise<Response> {
 			},
 			{ status: 404 },
 		);
+		console.log(
+			formatChatTrace(trace, { event: "completed", status: response.status, elapsedMs: Date.now() - startedAt }),
+		);
+		return response;
 	}
 
-	return handleChatCompletions(body, provider, { conversationId: resolveConversationKey(req) ?? undefined });
+	try {
+		const response = await handleChatCompletions(body, provider, { conversationId: conversationId ?? undefined });
+		console.log(
+			formatChatTrace(trace, { event: "completed", status: response.status, elapsedMs: Date.now() - startedAt }),
+		);
+		return response;
+	} catch (error) {
+		console.error(
+			formatChatTrace(trace, {
+				event: "failed",
+				error: error instanceof Error ? error.name : "unknown",
+				elapsedMs: Date.now() - startedAt,
+			}),
+		);
+		throw error;
+	}
 }
 
 async function handleModelsRoute(): Promise<Response> {
