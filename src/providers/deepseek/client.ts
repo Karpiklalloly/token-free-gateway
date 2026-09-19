@@ -4,8 +4,10 @@ import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
 import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
 import { parseCookieHeader } from "../shared/cookie-parser.ts";
-import type { StreamResult } from "../types.ts";
+import { textToStream } from "../shared/stream-helpers.ts";
+import { ProviderApiError, type StreamResult } from "../types.ts";
 import type { DeepSeekWebCredentials } from "./auth.ts";
+import { getDeepSeekChatRoute, setDeepSeekChatRoute } from "./chat-routes.ts";
 import { parseDeepSeekStream } from "./stream.ts";
 
 export function resolveDeepSeekFlags(
@@ -41,32 +43,42 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		maxWaitMs: 300_000,
 		stabilityThreshold: 2,
 	};
-	private tail: Promise<void> = Promise.resolve();
+	private readonly pages = new Map<string, Page>();
+	private readonly tails = new Map<string, Promise<void>>();
 
 	protected getCookies() {
 		return parseCookieHeader(this.auth.cookie || "", this.config.cookieDomain);
 	}
 
-	protected override async getPage(): Promise<Page> {
-		if (this.page) {
+	override async init(): Promise<void> {}
+
+	protected async getPageForConversation(conversationId: string): Promise<Page> {
+		const existing = this.pages.get(conversationId);
+		if (existing) {
 			try {
-				await this.page.evaluate(() => document.readyState);
-				return this.page;
+				await existing.evaluate(() => document.readyState);
+				return existing;
 			} catch {
-				this.page = null;
+				this.pages.delete(conversationId);
 			}
 		}
 
 		const browser = BrowserManager.getInstance();
 		const cookies = this.getCookies();
 		if (cookies.length > 0) await browser.addCookies(cookies);
-		this.page = await (await browser.getContext()).newPage();
-		await this.page.goto(this.config.startUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
-		return this.page;
+		const page = await (await browser.getContext()).newPage();
+		await page.goto(getDeepSeekChatRoute(conversationId) ?? this.config.startUrl, {
+			waitUntil: "domcontentloaded",
+			timeout: 120_000,
+		});
+		this.pages.set(conversationId, page);
+		return page;
 	}
 
 	override async close(): Promise<void> {
-		await this.page?.close().catch(() => {});
+		await Promise.all([...this.pages.values()].map((page) => page.close().catch(() => {})));
+		this.pages.clear();
+		this.tails.clear();
 		this.page = null;
 	}
 
@@ -75,17 +87,39 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		model?: string;
 		signal?: AbortSignal;
 		reasoningEffort?: ReasoningEffort;
+		conversationId?: string;
 	}): Promise<ReadableStream<Uint8Array>> {
-		const previous = this.tail;
+		const conversationId = params.conversationId;
+		if (!conversationId) {
+			throw new ProviderApiError(400, "DeepSeek routing requires an OpenCode/Hermes chat identifier");
+		}
+
+		const previous = this.tails.get(conversationId) ?? Promise.resolve();
 		let release!: () => void;
-		this.tail = new Promise<void>((resolve) => {
+		const tail = new Promise<void>((resolve) => {
 			release = resolve;
 		});
+		this.tails.set(conversationId, tail);
 		await previous;
 		try {
-			return await super.sendMessage(params);
+			const page = await this.getPageForConversation(conversationId);
+			const text = await this.sendViaDom(page, {
+				message: params.message,
+				model: params.model || this.config.models[0]?.id || "default",
+				signal: params.signal,
+				reasoningEffort: params.reasoningEffort,
+				conversationId,
+			});
+			if (!text) throw new Error("deepseek-web: no assistant reply detected");
+
+			const url = page.url();
+			if (url.startsWith("https://chat.deepseek.com/a/chat/s/")) {
+				setDeepSeekChatRoute(conversationId, url);
+			}
+			return textToStream(this.formatSsePayload(text));
 		} finally {
 			release();
+			if (this.tails.get(conversationId) === tail) this.tails.delete(conversationId);
 		}
 	}
 

@@ -45,18 +45,21 @@ describe("resolveDeepSeekFlags", () => {
 	});
 });
 
-test("DeepSeekWebClient creates a dedicated page instead of using a user tab", async () => {
+test("DeepSeekWebClient keeps dedicated pages separate by conversation", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
 	let newPageCalls = 0;
 	let userPageTouched = false;
-	const dedicatedPage = { evaluate: async () => "complete", goto: async () => undefined };
+	const pages: unknown[] = [];
 	const originalGetInstance = BrowserManager.getInstance;
 	(BrowserManager as unknown as { getInstance: typeof BrowserManager.getInstance }).getInstance = () =>
 		({
+			addCookies: async () => undefined,
 			getContext: async () => ({
 				newPage: async () => {
 					newPageCalls++;
-					return dedicatedPage;
+					const page = { evaluate: async () => "complete", goto: async () => undefined };
+					pages.push(page);
+					return page;
 				},
 			}),
 			getPage: async () => {
@@ -66,14 +69,21 @@ test("DeepSeekWebClient creates a dedicated page instead of using a user tab", a
 		}) as any;
 
 	try {
-		await client.init();
-		await client.init();
+		const internals = client as unknown as {
+			getPageForConversation: (conversationId: string) => Promise<unknown>;
+		};
+		const first = await internals.getPageForConversation("ses_chat_a");
+		const repeated = await internals.getPageForConversation("ses_chat_a");
+		const second = await internals.getPageForConversation("ses_chat_b");
+		expect(first).toBe(repeated);
+		expect(first).not.toBe(second);
 	} finally {
 		(BrowserManager as unknown as { getInstance: typeof BrowserManager.getInstance }).getInstance =
 			originalGetInstance;
 	}
 
-	expect(newPageCalls).toBe(1);
+	expect(newPageCalls).toBe(2);
+	expect(pages).toHaveLength(2);
 	expect(userPageTouched).toBe(false);
 });
 
@@ -121,11 +131,16 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 				state.messageCount = 2;
 			},
 		},
+		url: () => "https://chat.deepseek.com/",
 	};
-	const internals = client as unknown as { getPage: () => Promise<unknown> };
-	internals.getPage = async () => page;
+	const internals = client as unknown as {
+		getPageForConversation: () => Promise<unknown>;
+	};
+	internals.getPageForConversation = async () => page;
 
-	const result = await client.parseStream(await client.sendMessage({ message: "task" }));
+	const result = await client.parseStream(
+		await client.sendMessage({ message: "task", conversationId: "ses_chat_a" }),
+	);
 
 	expect(result.text).toBe("completed answer");
 	expect(state.continueClicks).toBe(1);
@@ -137,19 +152,19 @@ test("DeepSeekWebClient serializes requests to its dedicated page", async () => 
 	const submitted: string[] = [];
 	let releaseFirst: (value: string) => void = () => {};
 	const internals = client as unknown as {
-		getPage: () => Promise<unknown>;
+		getPageForConversation: () => Promise<unknown>;
 		sendViaDom: (_page: unknown, params: { message: string }) => Promise<string>;
 	};
-	internals.getPage = async () => ({});
+	internals.getPageForConversation = async () => ({ url: () => "https://chat.deepseek.com/" });
 	internals.sendViaDom = async (_page, params) => {
 		submitted.push(params.message);
 		if (params.message === "first") return new Promise<string>((resolve) => (releaseFirst = resolve));
 		return "second answer";
 	};
 
-	const first = client.sendMessage({ message: "first" });
+	const first = client.sendMessage({ message: "first", conversationId: "ses_chat_a" });
 	await Promise.resolve();
-	const second = client.sendMessage({ message: "second" });
+	const second = client.sendMessage({ message: "second", conversationId: "ses_chat_a" });
 	await Promise.resolve();
 
 	expect(submitted).toEqual(["first"]);
@@ -157,4 +172,30 @@ test("DeepSeekWebClient serializes requests to its dedicated page", async () => 
 	await first;
 	await second;
 	expect(submitted).toEqual(["first", "second"]);
+});
+
+test("DeepSeekWebClient does not queue different conversations together", async () => {
+	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
+	const submitted: string[] = [];
+	let releaseFirst: (value: string) => void = () => {};
+	const internals = client as unknown as {
+		getPageForConversation: () => Promise<unknown>;
+		sendViaDom: (_page: unknown, params: { message: string }) => Promise<string>;
+	};
+	internals.getPageForConversation = async () => ({ url: () => "https://chat.deepseek.com/" });
+	internals.sendViaDom = async (_page, params) => {
+		submitted.push(params.message);
+		if (params.message === "first") return new Promise<string>((resolve) => (releaseFirst = resolve));
+		return "second answer";
+	};
+
+	const first = client.sendMessage({ message: "first", conversationId: "ses_chat_a" });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+	const second = client.sendMessage({ message: "second", conversationId: "ses_chat_b" });
+	await new Promise((resolve) => setTimeout(resolve, 0));
+
+	expect(submitted).toEqual(["first", "second"]);
+	releaseFirst("first answer");
+	await first;
+	await second;
 });
