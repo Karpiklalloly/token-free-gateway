@@ -94,7 +94,13 @@ test("DeepSeekWebClient rejects requests without an OpenCode chat ID", async () 
 
 test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
-	const state = { filled: "", messageCount: 0, continueClicks: 0, continueVisible: true };
+	const state = {
+		filled: "",
+		messageCount: 5,
+		lastMessageText: "previous answer",
+		continueClicks: 0,
+		continueVisible: true,
+	};
 	const input = {
 		count: async () => 1,
 		first() {
@@ -107,9 +113,9 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 	};
 	const assistant = {
 		locator: () => ({
-			last: () => ({ innerText: async () => "completed answer" }),
+			last: () => ({ innerText: async () => state.lastMessageText }),
 		}),
-		innerText: async () => "completed answer",
+		innerText: async () => state.lastMessageText,
 	};
 	const page = {
 		locator: (selector: string) => {
@@ -129,11 +135,28 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 			}),
 		}),
 		evaluate: async () => "",
-		waitForFunction: async () => undefined,
+		waitForFunction: async (predicate: (previousState: unknown) => boolean, previousState: unknown) => {
+			const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
+			Object.defineProperty(globalThis, "document", {
+				configurable: true,
+				value: {
+					querySelectorAll: () =>
+						Array.from({ length: state.messageCount }, (_, index) => ({
+							textContent: index === state.messageCount - 1 ? state.lastMessageText : "old",
+						})),
+				},
+			});
+			try {
+				expect(predicate(previousState)).toBe(true);
+			} finally {
+				if (descriptor) Object.defineProperty(globalThis, "document", descriptor);
+				else Reflect.deleteProperty(globalThis, "document");
+			}
+		},
 		waitForTimeout: async () => undefined,
 		keyboard: {
 			press: async () => {
-				state.messageCount = 2;
+				state.lastMessageText = "completed answer";
 			},
 		},
 		url: () => "https://chat.deepseek.com/",

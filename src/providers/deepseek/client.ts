@@ -124,7 +124,9 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 	}
 
 	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
-		const beforeCount = await page.locator(".ds-message").count();
+		const messages = page.locator(".ds-message");
+		const beforeCount = await messages.count();
+		const beforeText = (await messages.last().innerText().catch(() => "")).trim();
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
 		await input.click({ timeout: 10_000 });
@@ -132,12 +134,16 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		await page.keyboard.press("Enter");
 
 		await page.waitForFunction(
-			(previousMessages) => document.querySelectorAll(".ds-message").length > previousMessages + 1,
-			beforeCount,
+			(previous) => {
+				const messages = document.querySelectorAll(".ds-message");
+				const lastText = messages[messages.length - 1]?.textContent?.trim() ?? "";
+				return messages.length > previous.count || lastText !== previous.text;
+			},
+			{ count: beforeCount, text: beforeText },
 			{ timeout: this.config.maxWaitMs, polling: 500 },
 		);
 
-		const message = page.locator(".ds-message").last();
+		const message = messages.last();
 		const interval = this.config.pollIntervalMs ?? 750;
 		const maxWait = this.config.maxWaitMs ?? 300_000;
 		const threshold = this.config.stabilityThreshold ?? 2;
