@@ -110,6 +110,7 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		sendButtonChecks: 0,
 		sendAttempts: 0,
 		enterPresses: 0,
+		submitOnEnter: true,
 	};
 	const input = {
 		count: async () => 1,
@@ -132,7 +133,7 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		press: async (key: string) => {
 			if (key !== "Enter") throw new Error(`unexpected key: ${key}`);
 			state.enterPresses++;
-			state.lastMessageText = "completed answer";
+			if (state.submitOnEnter) state.lastMessageText = "completed answer";
 		},
 	};
 	const fileInput = {
@@ -228,6 +229,21 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 	]);
 	expect(state.enterPresses).toBe(1);
 	expect(state.sendAttempts).toBe(0);
+
+	state.submitOnEnter = false;
+	state.lastMessageText = "previous answer";
+	state.continueVisible = false;
+	state.sendButtonChecks = 0;
+	state.sendButtonReady = false;
+	await client.parseStream(
+		await client.sendMessage({
+			message: "retry",
+			conversationId: "ses_chat_a",
+			images: [{ url: "data:image/png;base64,AA==" }],
+		}),
+	);
+	expect(state.enterPresses).toBe(2);
+	expect(state.sendAttempts).toBe(1);
 });
 
 test("DeepSeekWebClient serializes requests to its dedicated page", async () => {

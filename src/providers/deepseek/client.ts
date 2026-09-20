@@ -142,6 +142,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 
 	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
 		const messages = page.locator(".ds-message");
+		const beforeCount = await messages.count();
 		const beforeText = (await messages.last().innerText().catch(() => "")).trim();
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
@@ -161,9 +162,23 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		await input.click({ timeout: 10_000 });
 		if (params.message) await pasteText(page, params.message, inputHandle);
 
+		let submitted = false;
 		try {
 			await input.press("Enter");
+			const submissionDeadline = Date.now() + 3_000;
+			while (Date.now() < submissionDeadline) {
+				const countChanged = (await messages.count().catch(() => beforeCount)) > beforeCount;
+				const latestText = (await messages.last().innerText().catch(() => "")).trim();
+				if (countChanged || (latestText && latestText !== beforeText)) {
+					submitted = true;
+					break;
+				}
+				await page.waitForTimeout(100);
+			}
 		} catch {
+			submitted = false;
+		}
+		if (!submitted) {
 			let sendButton = page
 				.locator(
 					'.chat-input-send-button:visible button, .chat-input-send-button:visible [role="button"], .chat-input-send-button:visible',
