@@ -1,4 +1,5 @@
 import type { ReasoningEffort } from "./model-spec.ts";
+import type { ImageInput } from "../openai/types.ts";
 
 export interface ModelInfo {
 	id: string;
@@ -46,6 +47,7 @@ export interface WebProviderClient {
 	signal?: AbortSignal;
 	reasoningEffort?: ReasoningEffort;
 	conversationId?: string;
+	images?: ImageInput[];
 }): Promise<ReadableStream<Uint8Array>>;
 	parseStream(
 		body: ReadableStream<Uint8Array>,

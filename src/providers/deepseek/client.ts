@@ -1,5 +1,7 @@
+import { Buffer } from "node:buffer";
 import type { Page } from "playwright-core";
 import { BrowserManager } from "../../browser/manager.ts";
+import { pasteText } from "../../browser/dom-input.ts";
 import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
 import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
@@ -7,6 +9,7 @@ import { parseCookieHeader } from "../shared/cookie-parser.ts";
 import { textToStream } from "../shared/stream-helpers.ts";
 import { ProviderApiError, type StreamResult } from "../types.ts";
 import type { DeepSeekWebCredentials } from "./auth.ts";
+import type { ImageInput } from "../../openai/types.ts";
 import { getDeepSeekChatRoute, setDeepSeekChatRoute } from "./chat-routes.ts";
 import { parseDeepSeekStream } from "./stream.ts";
 
@@ -22,6 +25,18 @@ export function resolveDeepSeekFlags(
 		thinking: spec.think ?? effortToThink(reasoningEffort) ?? isReasoner,
 		search: spec.search ?? legacySearchEnabled ?? true,
 	};
+}
+
+function imageToFile(image: ImageInput, index: number): { name: string; mimeType: string; buffer: Buffer } {
+	const match = /^data:([^;,]+)?(;base64)?,([\s\S]*)$/.exec(image.url);
+	if (!match) throw new ProviderApiError(400, "deepseek-web: image URL must be a data URL");
+
+	const mimeType = match[1] || "application/octet-stream";
+	const buffer = match[2]
+		? Buffer.from(match[3] ?? "", "base64")
+		: Buffer.from(decodeURIComponent(match[3] ?? ""));
+	const extension = mimeType.split("/")[1]?.replace(/[^a-z0-9]/gi, "") || "bin";
+	return { name: `image-${index}.${extension}`, mimeType, buffer };
 }
 
 export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
@@ -88,6 +103,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		signal?: AbortSignal;
 		reasoningEffort?: ReasoningEffort;
 		conversationId?: string;
+		images?: ImageInput[];
 	}): Promise<ReadableStream<Uint8Array>> {
 		const conversationId = params.conversationId;
 		if (!conversationId) {
@@ -109,6 +125,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 				signal: params.signal,
 				reasoningEffort: params.reasoningEffort,
 				conversationId,
+				images: params.images,
 			});
 			if (!text) throw new Error("deepseek-web: no assistant reply detected");
 
@@ -125,7 +142,6 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 
 	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
 		const messages = page.locator(".ds-message");
-		const beforeCount = await messages.count();
 		const beforeText = (await messages.last().innerText().catch(() => "")).trim();
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
@@ -134,19 +150,55 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 			if (Date.now() >= inputDeadline) throw new Error("deepseek-web: message input did not become editable");
 			await page.waitForTimeout(250);
 		}
+		const inputHandle = await input.elementHandle();
+		if (!inputHandle) throw new Error("deepseek-web: message input disappeared");
+		if (params.images?.length) {
+			const fileInput = page.locator('input[type="file"]').first();
+			if ((await fileInput.count()) === 0) throw new Error("deepseek-web: file input not found");
+			await fileInput.setInputFiles(params.images.map(imageToFile));
+			await page.waitForTimeout(400);
+		}
 		await input.click({ timeout: 10_000 });
-		await input.fill(params.message);
-		await page.keyboard.press("Enter");
+		if (params.message) await pasteText(page, params.message, inputHandle);
 
-		await page.waitForFunction(
-			(previous) => {
-				const messages = document.querySelectorAll(".ds-message");
-				const lastText = messages[messages.length - 1]?.textContent?.trim() ?? "";
-				return messages.length > previous.count || lastText !== previous.text;
-			},
-			{ count: beforeCount, text: beforeText },
-			{ timeout: this.config.maxWaitMs, polling: 500 },
-		);
+		let sendButton = page
+			.locator(
+				'.chat-input-send-button:visible button, .chat-input-send-button:visible [role="button"], .chat-input-send-button:visible',
+			)
+			.last();
+		if ((await sendButton.count()) === 0) {
+			sendButton = page
+				.locator(
+					'button[type="submit"]:visible, button[aria-label*="send" i]:visible, button[aria-label*="发送"]:visible, [role="button"]:visible',
+				)
+				.last();
+		}
+		if ((await sendButton.count()) > 0) {
+			const sendDeadline = Date.now() + 30_000;
+			while (true) {
+				const enabled = await sendButton.isEnabled().catch(() => false);
+				const active = await sendButton
+					.evaluate((element) => {
+						const style = window.getComputedStyle(element);
+						return (
+							!element.matches(":disabled") &&
+							element.getAttribute("aria-disabled") !== "true" &&
+							element.getAttribute("data-disabled") !== "true" &&
+							!element.classList.contains("disabled") &&
+							style.pointerEvents !== "none"
+						);
+					})
+					.catch(() => false);
+				if (enabled && active) break;
+				if (Date.now() >= sendDeadline) {
+					throw new Error("deepseek-web: send button did not become enabled");
+				}
+				await page.waitForTimeout(100);
+			}
+			await sendButton.click({ timeout: 10_000 });
+		} else {
+			await input.press("Enter").catch(() => page.keyboard.press("Enter"));
+		}
 
 		const message = messages.last();
 		const interval = this.config.pollIntervalMs ?? 750;
@@ -170,7 +222,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 			const text = (
 				(await markdown.innerText().catch(() => "")) || (await message.innerText().catch(() => ""))
 			).trim();
-			if (text && text !== params.message) {
+			if (text && text !== params.message && text !== beforeText) {
 				if (text === lastText) {
 					stableCount++;
 					if (stableCount >= threshold) return text;

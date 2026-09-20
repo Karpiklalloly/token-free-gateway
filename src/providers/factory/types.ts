@@ -1,5 +1,6 @@
 import type { ReasoningEffort } from "../model-spec.ts";
 import type { ModelInfo } from "../types.ts";
+import type { ImageInput } from "../../openai/types.ts";
 
 /** Static configuration shared by all API-based providers. */
 export interface ApiClientConfig {
@@ -31,4 +32,5 @@ export interface NormalizedSendParams {
 	signal?: AbortSignal;
 	reasoningEffort?: ReasoningEffort;
 	conversationId?: string;
+	images?: ImageInput[];
 }

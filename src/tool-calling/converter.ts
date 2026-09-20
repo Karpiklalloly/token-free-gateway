@@ -10,6 +10,8 @@
 import type {
 	AssistantMessage,
 	ChatMessage,
+	ImageInput,
+	ContentPart,
 	ToolCallOutput,
 	ToolChoice,
 	ToolDefinition,
@@ -22,6 +24,7 @@ export interface ConvertedPrompt {
 	prompt: string;
 	/** Whether tools are active after applying tool_choice */
 	hasTools: boolean;
+	images: ImageInput[];
 }
 
 function detectLang(messages: ChatMessage[]): ToolPromptLang {
@@ -41,6 +44,11 @@ function extractTextContent(content: string | { type: string; text?: string }[])
 		.filter((p) => p.type === "text")
 		.map((p) => p.text ?? "")
 		.join("");
+}
+
+function extractImages(content: string | ContentPart[]): ImageInput[] {
+	if (typeof content === "string") return [];
+	return content.flatMap((part) => (part.type === "image_url" && part.image_url ? [part.image_url] : []));
 }
 
 function formatAssistantMsg(msg: AssistantMessage): string | null {
@@ -130,6 +138,8 @@ export function buildPromptFromMessages(
 	const hasTools = effective.tools.length > 0;
 	const parts: string[] = [];
 	const lang = detectLang(messages);
+	const lastUser = [...messages].reverse().find((msg) => msg?.role === "user");
+	const images = lastUser?.role === "user" ? extractImages(lastUser.content) : [];
 
 	if (hasTools) {
 		parts.push(buildToolPrompt(effective.tools, lang, effective.forceUse));
@@ -151,7 +161,7 @@ export function buildPromptFromMessages(
 		);
 	}
 
-	return { prompt: parts.join("\n\n"), hasTools };
+	return { prompt: parts.join("\n\n"), hasTools, images };
 }
 
 /**

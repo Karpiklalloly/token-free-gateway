@@ -40,7 +40,12 @@ export interface ToolMessage {
 export interface ContentPart {
 	type: "text" | "image_url";
 	text?: string;
-	image_url?: { url: string; detail?: string };
+	image_url?: ImageInput;
+}
+
+export interface ImageInput {
+	url: string;
+	detail?: string;
 }
 
 export interface ToolDefinition {

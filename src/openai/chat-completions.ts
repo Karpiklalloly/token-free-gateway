@@ -6,6 +6,7 @@ import { makeChunk, sseDone, sseEvent, sseHeaders } from "./sse.ts";
 import type {
 	ChatCompletionRequest,
 	ChatCompletionResponse,
+	ImageInput,
 	ToolCallDelta,
 	ToolCallOutput,
 } from "./types.ts";
@@ -96,15 +97,15 @@ export async function handleChatCompletions(
 
 	const id = generateId();
 	const model = body.model;
-	const { prompt, hasTools } = buildPromptFromMessages(body.messages, body.tools, body.tool_choice);
+	const { prompt, hasTools, images } = buildPromptFromMessages(body.messages, body.tools, body.tool_choice);
 
 	if (!prompt) {
 		return jsonError("Could not construct prompt from messages", 400);
 	}
 
 	const handler = body.stream
-		? handleStreaming(id, model, prompt, hasTools, body, client, context)
-		: handleNonStreaming(id, model, prompt, hasTools, body, client, context);
+		? handleStreaming(id, model, prompt, hasTools, images, body, client, context)
+		: handleNonStreaming(id, model, prompt, hasTools, images, body, client, context);
 
 	const timeout = new Promise<Response>((resolve) =>
 		setTimeout(() => {
@@ -121,6 +122,7 @@ async function handleNonStreaming(
 	model: string,
 	prompt: string,
 	hasTools: boolean,
+	images: ImageInput[],
 	body: ChatCompletionRequest,
 	client: WebProviderClient,
 	context: ChatCompletionContext,
@@ -131,6 +133,7 @@ async function handleNonStreaming(
 			model,
 			reasoningEffort: body.reasoning_effort,
 			conversationId: context.conversationId,
+			images,
 		});
 		const result = await client.parseStream(stream);
 
@@ -227,6 +230,7 @@ async function handleStreaming(
 	model: string,
 	prompt: string,
 	hasTools: boolean,
+	images: ImageInput[],
 	body: ChatCompletionRequest,
 	client: WebProviderClient,
 	context: ChatCompletionContext,
@@ -242,6 +246,7 @@ async function handleStreaming(
 			model,
 			reasoningEffort: body.reasoning_effort,
 			conversationId: context.conversationId,
+			images,
 		});
 	} catch (err) {
 		return providerErrorResponse(err, "streaming (pre-stream)");

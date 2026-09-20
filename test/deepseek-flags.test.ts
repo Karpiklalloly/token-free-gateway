@@ -95,30 +95,47 @@ test("DeepSeekWebClient rejects requests without a chat ID", async () => {
 	});
 });
 
-test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", async () => {
+test("DeepSeekWebClient sends after paste attachments are processed", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
 	const state = {
-		filled: "",
+		pasted: "",
 		messageCount: 5,
 		lastMessageText: "previous answer",
 		continueClicks: 0,
 		continueVisible: true,
 		inputReady: false,
+		pasteProcessed: false,
+		uploaded: undefined as unknown,
+		sendButtonReady: false,
+		sendButtonChecks: 0,
+		sendAttempts: 0,
 	};
 	const input = {
 		count: async () => 1,
 		first() {
 			return this;
 		},
+		elementHandle: async () => input,
 		click: async () => undefined,
+		innerText: async () => "",
+		inputValue: async () => state.pasted,
+		evaluate: async () => state.pasted,
 		isEditable: async () => {
 			const ready = state.inputReady;
 			state.inputReady = true;
 			return ready;
 		},
-		fill: async (value: string) => {
-			if (!state.inputReady) throw new Error("input is not editable");
-			state.filled = value;
+		fill: async () => {
+			throw new Error("DeepSeek should use human-like paste instead of fill");
+		},
+	};
+	const fileInput = {
+		count: async () => 1,
+		first() {
+			return this;
+		},
+		setInputFiles: async (files: unknown) => {
+			state.uploaded = files;
 		},
 	};
 	const assistant = {
@@ -127,9 +144,30 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 		}),
 		innerText: async () => state.lastMessageText,
 	};
+	const sendButton = {
+		count: async () => 1,
+		last() {
+			return this;
+		},
+		isEnabled: async () => {
+			return true;
+		},
+		evaluate: async () => {
+			state.sendButtonChecks++;
+			if (state.sendButtonChecks >= 2) state.sendButtonReady = true;
+			return state.sendButtonReady;
+		},
+		click: async () => {
+			if (!state.sendButtonReady) throw new Error("send button clicked before it became active");
+			state.sendAttempts++;
+			state.lastMessageText = "completed answer";
+		},
+	};
 	const page = {
 		locator: (selector: string) => {
+			if (selector.includes('input[type="file"]')) return fileInput;
 			if (selector.includes("textarea")) return input;
+			if (selector.includes("button")) return sendButton;
 			return {
 				count: async () => state.messageCount,
 				last: () => assistant,
@@ -145,27 +183,19 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 			}),
 		}),
 		evaluate: async () => "",
-		waitForFunction: async (predicate: (previousState: unknown) => boolean, previousState: unknown) => {
-			const descriptor = Object.getOwnPropertyDescriptor(globalThis, "document");
-			Object.defineProperty(globalThis, "document", {
-				configurable: true,
-				value: {
-					querySelectorAll: () =>
-						Array.from({ length: state.messageCount }, (_, index) => ({
-							textContent: index === state.messageCount - 1 ? state.lastMessageText : "old",
-						})),
-				},
-			});
-			try {
-				expect(predicate(previousState)).toBe(true);
-			} finally {
-				if (descriptor) Object.defineProperty(globalThis, "document", descriptor);
-				else Reflect.deleteProperty(globalThis, "document");
-			}
+		waitForFunction: async () => {
+			throw new Error("submission detection must not trigger a duplicate send");
 		},
 		waitForTimeout: async () => undefined,
 		keyboard: {
-			press: async () => {
+			press: async (key: string) => {
+				if (key.includes("KeyV")) {
+					state.pasteProcessed = true;
+					return;
+				}
+				if (key === "Enter" && !state.sendButtonReady) {
+					throw new Error("DeepSeek sent before the paste was processed");
+				}
 				state.lastMessageText = "completed answer";
 			},
 		},
@@ -177,12 +207,21 @@ test("DeepSeekWebClient clicks Continue and returns the settled DOM answer", asy
 	internals.getPageForConversation = async () => page;
 
 	const result = await client.parseStream(
-		await client.sendMessage({ message: "task", conversationId: "ses_chat_a" }),
+		await client.sendMessage({
+			message: "task",
+			conversationId: "ses_chat_a",
+			images: [{ url: "data:image/png;base64,AA==" }],
+		}),
 	);
 
 	expect(result.text).toBe("completed answer");
 	expect(state.continueClicks).toBe(1);
-	expect(state.filled).toBe("task");
+	expect(state.pasteProcessed).toBe(true);
+	expect(state.uploaded).toEqual([
+		{ name: "image-0.png", mimeType: "image/png", buffer: expect.anything() },
+	]);
+	expect(state.sendButtonReady).toBe(true);
+	expect(state.sendAttempts).toBe(1);
 });
 
 test("DeepSeekWebClient serializes requests to its dedicated page", async () => {

@@ -86,6 +86,21 @@ describe("buildPromptFromMessages", () => {
 		expect(hasTools).toBe(false);
 	});
 
+	test("keeps the latest user images beside the text prompt", () => {
+		const messages: ChatMessage[] = [
+			{
+				role: "user",
+				content: [
+					{ type: "text", text: "Describe this" },
+					{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } },
+				],
+			},
+		];
+		const result = buildPromptFromMessages(messages);
+		expect(result.prompt).toContain("Human: Describe this");
+		expect(result.images).toEqual([{ url: "data:image/png;base64,AA==" }]);
+	});
+
 	test("injects tool definitions when tools provided", () => {
 		const messages: ChatMessage[] = [{ role: "user", content: "List files" }];
 		const { prompt, hasTools } = buildPromptFromMessages(messages, TOOLS);

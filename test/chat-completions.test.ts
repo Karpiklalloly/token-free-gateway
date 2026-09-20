@@ -47,6 +47,37 @@ describe("chat completions handler (unit)", () => {
 		expect(receivedConversationId).toBe("ses_chat_a");
 	});
 
+	test("forwards image inputs to the provider", async () => {
+		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
+		let receivedImages: unknown;
+		const client = {
+			...createMockClient("Hello"),
+			sendMessage: async (params: { images?: unknown }) => {
+				receivedImages = params.images;
+				return createMockClient("Hello").sendMessage();
+			},
+		};
+
+		const response = await handleChatCompletions(
+			{
+				model: "test",
+				messages: [
+					{
+						role: "user",
+						content: [
+							{ type: "text", text: "Describe this" },
+							{ type: "image_url", image_url: { url: "data:image/png;base64,AA==" } },
+						],
+					},
+				],
+			} as any,
+			client as any,
+		);
+
+		expect(response.status).toBe(200);
+		expect(receivedImages).toEqual([{ url: "data:image/png;base64,AA==" }]);
+	});
+
 	test("rejects empty messages", async () => {
 		const { handleChatCompletions } = await import("../src/openai/chat-completions.ts");
 		const client = createMockClient("Hello");
