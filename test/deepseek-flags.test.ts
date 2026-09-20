@@ -109,6 +109,7 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		sendButtonReady: false,
 		sendButtonChecks: 0,
 		sendAttempts: 0,
+		enterPresses: 0,
 	};
 	const input = {
 		count: async () => 1,
@@ -127,6 +128,11 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		},
 		fill: async () => {
 			throw new Error("DeepSeek should use human-like paste instead of fill");
+		},
+		press: async (key: string) => {
+			if (key !== "Enter") throw new Error(`unexpected key: ${key}`);
+			state.enterPresses++;
+			state.lastMessageText = "completed answer";
 		},
 	};
 	const fileInput = {
@@ -220,8 +226,8 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 	expect(state.uploaded).toEqual([
 		{ name: "image-0.png", mimeType: "image/png", buffer: expect.anything() },
 	]);
-	expect(state.sendButtonReady).toBe(true);
-	expect(state.sendAttempts).toBe(1);
+	expect(state.enterPresses).toBe(1);
+	expect(state.sendAttempts).toBe(0);
 });
 
 test("DeepSeekWebClient serializes requests to its dedicated page", async () => {

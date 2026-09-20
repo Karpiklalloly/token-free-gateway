@@ -161,43 +161,47 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		await input.click({ timeout: 10_000 });
 		if (params.message) await pasteText(page, params.message, inputHandle);
 
-		let sendButton = page
-			.locator(
-				'.chat-input-send-button:visible button, .chat-input-send-button:visible [role="button"], .chat-input-send-button:visible',
-			)
-			.last();
-		if ((await sendButton.count()) === 0) {
-			sendButton = page
+		try {
+			await input.press("Enter");
+		} catch {
+			let sendButton = page
 				.locator(
-					'button[type="submit"]:visible, button[aria-label*="send" i]:visible, button[aria-label*="发送"]:visible, [role="button"]:visible',
+					'.chat-input-send-button:visible button, .chat-input-send-button:visible [role="button"], .chat-input-send-button:visible',
 				)
 				.last();
-		}
-		if ((await sendButton.count()) > 0) {
-			const sendDeadline = Date.now() + 30_000;
-			while (true) {
-				const enabled = await sendButton.isEnabled().catch(() => false);
-				const active = await sendButton
-					.evaluate((element) => {
-						const style = window.getComputedStyle(element);
-						return (
-							!element.matches(":disabled") &&
-							element.getAttribute("aria-disabled") !== "true" &&
-							element.getAttribute("data-disabled") !== "true" &&
-							!element.classList.contains("disabled") &&
-							style.pointerEvents !== "none"
-						);
-					})
-					.catch(() => false);
-				if (enabled && active) break;
-				if (Date.now() >= sendDeadline) {
-					throw new Error("deepseek-web: send button did not become enabled");
-				}
-				await page.waitForTimeout(100);
+			if ((await sendButton.count()) === 0) {
+				sendButton = page
+					.locator(
+						'button[type="submit"]:visible, button[aria-label*="send" i]:visible, button[aria-label*="发送"]:visible, [role="button"]:visible',
+					)
+					.last();
 			}
-			await sendButton.click({ timeout: 10_000 });
-		} else {
-			await input.press("Enter").catch(() => page.keyboard.press("Enter"));
+			if ((await sendButton.count()) > 0) {
+				const sendDeadline = Date.now() + 30_000;
+				while (true) {
+					const enabled = await sendButton.isEnabled().catch(() => false);
+					const active = await sendButton
+						.evaluate((element) => {
+							const style = window.getComputedStyle(element);
+							return (
+								!element.matches(":disabled") &&
+								element.getAttribute("aria-disabled") !== "true" &&
+								element.getAttribute("data-disabled") !== "true" &&
+								!element.classList.contains("disabled") &&
+								style.pointerEvents !== "none"
+							);
+						})
+						.catch(() => false);
+					if (enabled && active) break;
+					if (Date.now() >= sendDeadline) {
+						throw new Error("deepseek-web: send button did not become enabled");
+					}
+					await page.waitForTimeout(100);
+				}
+				await sendButton.click({ timeout: 10_000 });
+			} else {
+				await page.keyboard.press("Enter");
+			}
 		}
 
 		const message = messages.last();
