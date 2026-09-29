@@ -212,14 +212,28 @@ function parseToolJson(raw: string): ParsedToolCall | null {
 	const unescaped = raw.replace(/\\"/g, '"').trim();
 	if (unescaped !== candidates[0]) candidates.push(unescaped);
 
-	for (let cleaned of candidates) {
+	for (const cleaned of candidates) {
 		try {
-			// Auto-repair unbalanced braces
-			const opens = (cleaned.match(/\{/g) || []).length;
-			const closes = (cleaned.match(/\}/g) || []).length;
-			if (opens > closes) cleaned += "}".repeat(opens - closes);
-
-			const obj = JSON.parse(cleaned);
+			let obj;
+			try {
+				obj = JSON.parse(cleaned);
+			} catch {
+				// Repair a genuinely truncated object; braces inside JSON strings are data.
+				let depth = 0;
+				let inString = false;
+				let escaped = false;
+				for (const char of cleaned) {
+					if (inString) {
+						if (escaped) escaped = false;
+						else if (char === "\\") escaped = true;
+						else if (char === '"') inString = false;
+					} else if (char === '"') inString = true;
+					else if (char === "{") depth++;
+					else if (char === "}") depth--;
+				}
+				if (inString || depth <= 0) continue;
+				obj = JSON.parse(cleaned + "}".repeat(depth));
+			}
 
 			// Format: {"tool":"name","parameters":{...}}
 			if (typeof obj.tool === "string") {

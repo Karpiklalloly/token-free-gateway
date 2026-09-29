@@ -66,6 +66,20 @@ Copy Download
 		});
 	});
 
+	test("parses valid patch JSON when code strings contain unmatched braces", () => {
+		const payload = JSON.stringify({
+			tool: "patch",
+			parameters: {
+				path: "game.js",
+				old_string: "var x = 1;\nif (x) {",
+				new_string: "var x = 2;\nif (x) {",
+			},
+		});
+		const text = `tool_json\nCopy\nDownload\n${payload}`;
+		expect(hasToolCall(text)).toBe(true);
+		expect(extractToolCalls(text)).toEqual([{ name: "patch", arguments: JSON.parse(payload).parameters }]);
+	});
+
 	test("parses DOM tool_json with nested parameter objects", () => {
 		const payload = JSON.stringify({
 			tool: "edit",
