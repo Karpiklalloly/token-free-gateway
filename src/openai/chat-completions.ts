@@ -134,6 +134,7 @@ async function handleNonStreaming(
 			reasoningEffort: body.reasoning_effort,
 			conversationId: context.conversationId,
 			images,
+			history: body,
 		});
 		const result = await client.parseStream(stream);
 
@@ -247,6 +248,7 @@ async function handleStreaming(
 			reasoningEffort: body.reasoning_effort,
 			conversationId: context.conversationId,
 			images,
+			history: body,
 		});
 	} catch (err) {
 		return providerErrorResponse(err, "streaming (pre-stream)");
@@ -307,6 +309,9 @@ async function streamWithTools(
 	const finishReason = delegatedToolCalls ? "tool_calls" : parsed.finishReason;
 
 	if (finishReason === "tool_calls" && toolCalls) {
+		if (content) {
+			w.writeChunk(id, model, [{ index: 0, delta: { content }, finish_reason: null }]);
+		}
 		emitToolCallDeltas(w, id, model, toolCalls);
 		w.writeChunk(id, model, [{ index: 0, delta: {}, finish_reason: "tool_calls" }]);
 	} else {

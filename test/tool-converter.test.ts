@@ -276,6 +276,7 @@ describe("parseToolResponse", () => {
 		const text = 'Хорошо, посмотрю сама.\n\n[Calling terminal with command: ls -la "D:/sdktest/tasks/"]';
 		const result = parseToolResponse(text, terminalTools);
 		expect(result.finishReason).toBe("tool_calls");
+		expect(result.content).toBe("Хорошо, посмотрю сама.");
 		expect(result.toolCalls).toHaveLength(1);
 		expect(result.toolCalls?.[0]?.function.name).toBe("terminal");
 		expect(JSON.parse(result.toolCalls?.[0]?.function.arguments ?? "{}")).toEqual({
@@ -322,5 +323,18 @@ describe("parseToolResponse", () => {
 		const result = parseToolResponse(text, terminalTools);
 		expect(result.finishReason).toBe("tool_calls");
 		expect(result.toolCalls?.[0]?.function.name).toBe("run_terminal");
+	});
+
+	test("converts Hermes-style function lines into requested tool calls", () => {
+		const tools: ToolDefinition[] = ["search_files", "terminal"].map((name) => ({
+			type: "function",
+			function: { name, description: name, parameters: { type: "object", properties: {} } },
+		}));
+		const text = 'search_files(pattern="SOUL.md", target="files", path="C:/tmp/hermes", limit=20)\nterminal(command="ls -la "$LOCALAPPDATA/hermes" 2>/dev/null | head -50")';
+		const result = parseToolResponse(text, tools);
+		expect(result.finishReason).toBe("tool_calls");
+		expect(result.content).toBeNull();
+		expect(result.toolCalls?.map((call) => call.function.name)).toEqual(["search_files", "terminal"]);
+		expect(JSON.parse(result.toolCalls?.[0]?.function.arguments ?? "{}").limit).toBe(20);
 	});
 });

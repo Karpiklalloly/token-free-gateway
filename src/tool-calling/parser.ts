@@ -27,6 +27,15 @@ const DSML_INVOKE_REGEX =
 const DSML_PARAMETER_REGEX =
 	/<｜DSML｜parameter\b[^>]*\bname=(["'])([^"']+)\1[^>]*>([\s\S]*?)<\/｜DSML｜parameter>/g;
 const DSML_INVOKE_DETECT_REGEX = /<｜DSML｜invoke\b[^>]*\bname=["']/;
+const FUNCTION_CALL_LINE_REGEX = /^\s*([A-Za-z_][\w-]*)\((.*)\)\s*$/gm;
+const FUNCTION_CALL_DETECT_REGEX = /^\s*[A-Za-z_][\w-]*\(.+=.*\)\s*$/m;
+
+function normalizeDsmlTags(text: string): string {
+	return text.replace(
+		/<\s*(\/?)\s*[|｜]+\s*DSML\s*[|｜]+\s*/gi,
+		(_, close: string) => `<${close}｜DSML｜`,
+	);
+}
 
 function extractBalancedJsonObject(text: string, start: number): string | null {
 	let depth = 0;
@@ -49,21 +58,75 @@ function extractBalancedJsonObject(text: string, start: number): string | null {
 	return null;
 }
 
+function extractBareToolCalls(text: string): ParsedToolCall[] {
+	const sources = [text];
+	const unescaped = text.replace(/\\"/g, '"');
+	if (unescaped !== text) sources.push(unescaped);
+
+	for (const source of sources) {
+		const calls: ParsedToolCall[] = [];
+		const marker = /\{\s*"tool"\s*:/g;
+		let match = marker.exec(source);
+
+		while (match) {
+			const raw = extractBalancedJsonObject(source, match.index);
+			if (!raw) break;
+			const parsed = parseToolJson(raw);
+			if (parsed) calls.push(parsed);
+			marker.lastIndex = match.index + raw.length;
+			match = marker.exec(source);
+		}
+
+		if (calls.length > 0) return calls;
+	}
+
+	return [];
+}
+
 function extractBareToolCall(text: string): ParsedToolCall | null {
-	const marker = /\{\s*"tool"\s*:/g.exec(text);
-	if (!marker || marker.index === undefined) return null;
-	const raw = extractBalancedJsonObject(text, marker.index);
-	return raw ? parseToolJson(raw) : null;
+	return extractBareToolCalls(text)[0] ?? null;
 }
 
 function extractDsmlToolCalls(text: string): ParsedToolCall[] {
+	text = normalizeDsmlTags(text);
 	const calls: ParsedToolCall[] = [];
 	for (const invoke of text.matchAll(DSML_INVOKE_REGEX)) {
 		const arguments_: Record<string, unknown> = {};
 		for (const parameter of (invoke[3] ?? "").matchAll(DSML_PARAMETER_REGEX)) {
-			arguments_[parameter[2] ?? ""] = (parameter[3] ?? "").trim();
+			const value = (parameter[3] ?? "").trim();
+			const isString = /\bstring\s*=\s*(["'])false\1/i.test(parameter[0] ?? "");
+			try {
+				arguments_[parameter[2] ?? ""] = isString ? JSON.parse(value) : value;
+			} catch {
+				arguments_[parameter[2] ?? ""] = value;
+			}
 		}
 		if (invoke[2]) calls.push({ name: invoke[2], arguments: arguments_ });
+	}
+	return calls;
+}
+
+function extractFunctionToolCalls(text: string): ParsedToolCall[] {
+	const calls: ParsedToolCall[] = [];
+	for (const match of text.matchAll(FUNCTION_CALL_LINE_REGEX)) {
+		const args: Record<string, unknown> = {};
+		let valid = true;
+		for (const part of (match[2] ?? "").split(/,\s*(?=[A-Za-z_]\w*\s*=)/)) {
+			const argument = /^([A-Za-z_]\w*)\s*=\s*(.+)$/.exec(part.trim());
+			if (!argument) {
+				valid = false;
+				break;
+			}
+			const raw = argument[2] ?? "";
+			try {
+				args[argument[1] ?? ""] = JSON.parse(raw);
+			} catch {
+				args[argument[1] ?? ""] = raw.startsWith('"') && raw.endsWith('"')
+					? raw.slice(1, -1)
+					: raw;
+			}
+		}
+		if (valid && Object.keys(args).length && match[1]) calls.push({ name: match[1], arguments: args });
 	}
 	return calls;
 }
@@ -94,6 +157,12 @@ export function extractToolCalls(text: string): ParsedToolCall[] {
 	const dsmlCalls = extractDsmlToolCalls(text);
 	if (dsmlCalls.length > 0) return dsmlCalls;
 
+	const functionCalls = extractFunctionToolCalls(text);
+	if (functionCalls.length > 0) return functionCalls;
+
+	const bareCalls = extractBareToolCalls(text);
+	if (bareCalls.length > 0) return bareCalls;
+
 	// Try single extraction (fallback)
 	const single = extractSingleToolCall(text);
 	return single ? [single] : [];
@@ -106,6 +175,9 @@ export function extractSingleToolCall(text: string): ParsedToolCall | null {
 
 	const dsml = extractDsmlToolCalls(text);
 	if (dsml[0]) return dsml[0];
+
+	const functionCall = extractFunctionToolCalls(text)[0];
+	if (functionCall) return functionCall;
 
 	// 2. OpenAI-style tool_calls array
 	const openai = OPENAI_TOOL_CALLS_REGEX.exec(text);
@@ -136,34 +208,37 @@ export function extractSingleToolCall(text: string): ParsedToolCall | null {
 }
 
 function parseToolJson(raw: string): ParsedToolCall | null {
-	try {
-		let cleaned = raw.trim();
-		// Auto-repair unbalanced braces
-		const opens = (cleaned.match(/\{/g) || []).length;
-		const closes = (cleaned.match(/\}/g) || []).length;
-		if (opens > closes) {
-			cleaned += "}".repeat(opens - closes);
-		}
+	const candidates = [raw.trim()];
+	const unescaped = raw.replace(/\\"/g, '"').trim();
+	if (unescaped !== candidates[0]) candidates.push(unescaped);
 
-		const obj = JSON.parse(cleaned);
+	for (let cleaned of candidates) {
+		try {
+			// Auto-repair unbalanced braces
+			const opens = (cleaned.match(/\{/g) || []).length;
+			const closes = (cleaned.match(/\}/g) || []).length;
+			if (opens > closes) cleaned += "}".repeat(opens - closes);
 
-		// Format: {"tool":"name","parameters":{...}}
-		if (typeof obj.tool === "string") {
-			const arguments_ =
-				obj.parameters === undefined
-					? Object.fromEntries(Object.entries(obj).filter(([key]) => key !== "tool"))
-					: (obj.parameters ?? {});
-			return { name: obj.tool, arguments: arguments_ };
-		}
-		// Format: {"name":"...","arguments":{...}}
-		if (typeof obj.name === "string") {
-			return { name: obj.name, arguments: obj.arguments ?? {} };
-		}
+			const obj = JSON.parse(cleaned);
 
-		return null;
-	} catch {
-		return null;
+			// Format: {"tool":"name","parameters":{...}}
+			if (typeof obj.tool === "string") {
+				const arguments_ =
+					obj.parameters === undefined
+						? Object.fromEntries(Object.entries(obj).filter(([key]) => key !== "tool"))
+						: (obj.parameters ?? {});
+				return { name: obj.tool, arguments: arguments_ };
+			}
+			// Format: {"name":"...","arguments":{...}}
+			if (typeof obj.name === "string") {
+				return { name: obj.name, arguments: obj.arguments ?? {} };
+			}
+		} catch {
+			// Try the next representation.
+		}
 	}
+
+	return null;
 }
 
 export function hasToolCall(text: string): boolean {
@@ -172,7 +247,8 @@ export function hasToolCall(text: string): boolean {
 		extractBareToolCall(text) !== null ||
 		XML_TOOL_REGEX.test(text) ||
 		OPENAI_TOOL_CALLS_REGEX.test(text) ||
-		DSML_INVOKE_DETECT_REGEX.test(text) ||
+		DSML_INVOKE_DETECT_REGEX.test(normalizeDsmlTags(text)) ||
+		FUNCTION_CALL_DETECT_REGEX.test(text) ||
 		BRACKET_CALL_REGEX.test(text)
 	);
 }

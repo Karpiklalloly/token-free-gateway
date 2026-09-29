@@ -22,7 +22,12 @@ export async function pasteText(
 	await page.waitForTimeout(400);
 
 	const actual = inputHandle
-		? await inputHandle.innerText().catch(() => "")
+		? await inputHandle
+				.evaluate((el) => {
+					const value = (el as HTMLInputElement | HTMLTextAreaElement).value;
+					return value || (el as HTMLElement).innerText || "";
+				})
+				.catch(() => "")
 		: await page.evaluate(() => {
 				const el = document.activeElement as (HTMLTextAreaElement & HTMLElement) | null;
 				return el?.value ?? el?.innerText ?? "";

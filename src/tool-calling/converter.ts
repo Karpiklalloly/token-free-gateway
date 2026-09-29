@@ -10,8 +10,8 @@
 import type {
 	AssistantMessage,
 	ChatMessage,
-	ImageInput,
 	ContentPart,
+	ImageInput,
 	ToolCallOutput,
 	ToolChoice,
 	ToolDefinition,
@@ -186,8 +186,7 @@ function resolveToolName(parsedName: string, requestedTools: ToolDefinition[]): 
  * Parse Claude's text response and detect tool calls.
  * Returns either tool_calls or plain text content.
  *
- * When tool_calls are detected, content is set to null per OpenAI standard
- * (GPT-4 returns content: null when making tool calls).
+ * When a tool call follows assistant prose, preserve that prose as content.
  */
 export function parseToolResponse(
 	text: string,
@@ -226,6 +225,24 @@ export function parseToolResponse(
 		},
 	}));
 
-	// Per OpenAI standard: content is null when assistant produces tool_calls
-	return { content: null, toolCalls, finishReason: "tool_calls" };
+	const content = textBeforeToolCall(text);
+	return { content, toolCalls, finishReason: "tool_calls" };
+}
+
+function textBeforeToolCall(text: string): string | null {
+	const starts = [
+		/```tool_json/i,
+		/\btool_json\b/i,
+		/<\s*\/?\s*[|｜]+\s*DSML\s*[|｜]+\s*calls\b/i,
+		/<｜DSML｜invoke\b/,
+		/<\s*\/?\s*[|｜]+\s*DSML\s*[|｜]+\s*invoke\b/i,
+		/<tool_call\b/,
+		/^\s*[A-Za-z_][\w-]*\(.+=.*\)\s*$/m,
+		/\[\s*Calling\s+[A-Za-z_][\w-]*\s+with\s+command\s*:/i,
+		/\{\s*"(?:tool|tool_calls)"\s*:/,
+	]
+		.map((pattern) => pattern.exec(text)?.index ?? -1)
+		.filter((index) => index >= 0);
+	const prefix = text.slice(0, starts.length ? Math.min(...starts) : 0).trim();
+	return prefix || null;
 }

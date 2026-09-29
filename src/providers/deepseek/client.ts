@@ -1,7 +1,9 @@
 import { Buffer } from "node:buffer";
 import type { Page } from "playwright-core";
-import { BrowserManager } from "../../browser/manager.ts";
 import { pasteText } from "../../browser/dom-input.ts";
+import { BrowserManager } from "../../browser/manager.ts";
+import type { ChatCompletionRequest, ChatMessage, ImageInput } from "../../openai/types.ts";
+import { buildPromptFromMessages } from "../../tool-calling/converter.ts";
 import { BaseDomClient } from "../factory/base-dom-client.ts";
 import type { DomClientConfig, NormalizedSendParams } from "../factory/types.ts";
 import { effortToThink, parseModelString, type ReasoningEffort } from "../model-spec.ts";
@@ -9,9 +11,28 @@ import { parseCookieHeader } from "../shared/cookie-parser.ts";
 import { textToStream } from "../shared/stream-helpers.ts";
 import { ProviderApiError, type StreamResult } from "../types.ts";
 import type { DeepSeekWebCredentials } from "./auth.ts";
-import type { ImageInput } from "../../openai/types.ts";
 import { getDeepSeekChatRoute, setDeepSeekChatRoute } from "./chat-routes.ts";
 import { parseDeepSeekStream } from "./stream.ts";
+
+const LENGTH_LIMIT = /^\s*Length limit reached\. Please start a new chat\.\s*$/i;
+
+export function selectDeepSeekMessages(messages: ChatMessage[], continued: boolean): ChatMessage[] {
+	if (!continued) {
+		const system = messages.filter((message) => message.role === "system" || message.role === "developer");
+		return [...system, ...messages.filter((message) => message.role !== "system" && message.role !== "developer").slice(-8)];
+	}
+	const lastAssistant = messages.findLastIndex((message) => message.role === "assistant");
+	return messages.slice(lastAssistant + 1).filter((message) => message.role !== "system" && message.role !== "developer");
+}
+
+function deepSeekPrompt(history: ChatCompletionRequest, continued: boolean): string {
+	const selected = selectDeepSeekMessages(history.messages, continued);
+	const prompt = buildPromptFromMessages(selected, history.tools, history.tool_choice).prompt;
+	if (continued || prompt.length <= 30_000) return prompt;
+	const toolPrompt = buildPromptFromMessages([], history.tools, history.tool_choice).prompt;
+	const recent = buildPromptFromMessages(selected).prompt;
+	return `${toolPrompt}\n\n[Earlier conversation omitted. Inspect project files if needed.]\n\n${recent.slice(-Math.max(1_000, 30_000 - toolPrompt.length - 80))}`;
+}
 
 export function resolveDeepSeekFlags(
 	model: string | undefined,
@@ -104,6 +125,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		reasoningEffort?: ReasoningEffort;
 		conversationId?: string;
 		images?: ImageInput[];
+		history?: ChatCompletionRequest;
 	}): Promise<ReadableStream<Uint8Array>> {
 		const conversationId = params.conversationId;
 		if (!conversationId) {
@@ -118,15 +140,26 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		this.tails.set(conversationId, tail);
 		await previous;
 		try {
+			const flags = resolveDeepSeekFlags(params.model, params.reasoningEffort);
 			const page = await this.getPageForConversation(conversationId);
-			const text = await this.sendViaDom(page, {
-				message: params.message,
-				model: params.model || this.config.models[0]?.id || "default",
+			const savedRoute = getDeepSeekChatRoute(conversationId);
+			const firstPrompt = params.history ? deepSeekPrompt(params.history, Boolean(savedRoute)) : params.message;
+			const send = (message: string) => this.sendViaDom(page, {
+				message,
+				model: flags.base,
 				signal: params.signal,
 				reasoningEffort: params.reasoningEffort,
 				conversationId,
 				images: params.images,
+				thinking: flags.thinking,
+				search: flags.search,
 			});
+			let text = await send(firstPrompt);
+			if (LENGTH_LIMIT.test(text) && params.history) {
+				await page.goto(this.config.startUrl, { waitUntil: "domcontentloaded", timeout: 120_000 });
+				text = await send(deepSeekPrompt(params.history, false));
+				if (LENGTH_LIMIT.test(text)) throw new ProviderApiError(413, "DeepSeek rejected the shortened context; start a new Hermes chat");
+			}
 			if (!text) throw new Error("deepseek-web: no assistant reply detected");
 
 			const url = page.url();
@@ -140,10 +173,34 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		}
 	}
 
+	private async setToggle(page: Page, labels: RegExp, want: boolean): Promise<void> {
+		const toggles = page.locator('[aria-pressed]:visible');
+		for (let i = 0, count = await toggles.count(); i < count; i++) {
+			const toggle = toggles.nth(i);
+			if (!labels.test((await toggle.innerText().catch(() => "")).trim())) continue;
+			if ((await toggle.getAttribute("aria-pressed")) !== String(want)) {
+				await toggle.click({ timeout: 10_000 });
+			}
+			return;
+		}
+		console.warn("[DeepSeek] feature toggle not found; keeping the page default");
+	}
+
 	protected async sendViaDom(page: Page, params: NormalizedSendParams): Promise<string> {
+		if (params.thinking !== undefined) {
+			await this.setToggle(page, /Deep\s*Think|Глубокое мышление|深度思考|思考/i, params.thinking);
+		}
+		if (params.search !== undefined) {
+			await this.setToggle(page, /\bSearch\b|Умный поиск|联网搜索|搜索/i, params.search);
+		}
+
 		const messages = page.locator(".ds-message");
 		const beforeCount = await messages.count();
-		const beforeText = (await messages.last().innerText().catch(() => "")).trim();
+		const previousMessage = messages.last();
+		const previousResponse = previousMessage.locator(".ds-assistant-message-main-content");
+		const beforeText = beforeCount
+			? (await previousResponse.innerText({ timeout: 500 }).catch(() => "")).trim()
+			: "";
 		const input = page.locator('textarea[placeholder="Message DeepSeek"]:visible').first();
 		if ((await input.count()) === 0) throw new Error("deepseek-web: message input not found");
 		const inputDeadline = Date.now() + 30_000;
@@ -167,9 +224,7 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 			await input.press("Enter");
 			const submissionDeadline = Date.now() + 3_000;
 			while (Date.now() < submissionDeadline) {
-				const countChanged = (await messages.count().catch(() => beforeCount)) > beforeCount;
-				const latestText = (await messages.last().innerText().catch(() => "")).trim();
-				if (countChanged || (latestText && latestText !== beforeText)) {
+				if ((await messages.count().catch(() => beforeCount)) > beforeCount) {
 					submitted = true;
 					break;
 				}
@@ -225,9 +280,24 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		const threshold = this.config.stabilityThreshold ?? 2;
 		let lastText = "";
 		let stableCount = 0;
+		let retryClicks = 0;
 
 		for (let elapsed = 0; elapsed < maxWait; elapsed += interval) {
 			if (params.signal?.aborted) throw new Error("deepseek-web request aborted");
+			const retryButton = page.getByRole("button", { name: /^Retry$/i }).last();
+			const retryFallback = page.locator('[title="Retry"]:visible, [aria-label="Retry"]:visible').last();
+			const visibleRetry = await retryButton.isVisible().catch(() => false)
+				? retryButton
+				: await retryFallback.isVisible().catch(() => false) ? retryFallback : null;
+			if (visibleRetry) {
+				if (retryClicks++ >= 2) throw new ProviderApiError(502, "DeepSeek failed after two automatic retries");
+				console.warn(`[DeepSeek] Retrying failed generation (${retryClicks}/2)`);
+				await visibleRetry.click({ timeout: 10_000 });
+				lastText = "";
+				stableCount = 0;
+				await page.waitForTimeout(interval);
+				continue;
+			}
 			const continueButton = page.getByRole("button", { name: /^Continue$/i }).last();
 			if (await continueButton.isVisible().catch(() => false)) {
 				await continueButton.click({ timeout: 10_000 });
@@ -237,10 +307,8 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 				continue;
 			}
 
-			const markdown = message.locator(".ds-markdown").last();
-			const text = (
-				(await markdown.innerText().catch(() => "")) || (await message.innerText().catch(() => ""))
-			).trim();
+			const response = message.locator(".ds-assistant-message-main-content");
+			const text = (await response.innerText({ timeout: 500 }).catch(() => "")).trim();
 			if (text && text !== params.message && text !== beforeText) {
 				if (text === lastText) {
 					stableCount++;

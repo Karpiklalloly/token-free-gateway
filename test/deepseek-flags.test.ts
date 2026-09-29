@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { BrowserManager } from "../src/browser/manager.ts";
 import {
 	DeepSeekWebClient,
 	resolveDeepSeekFlags,
 } from "../src/providers/deepseek/client.ts";
-import { BrowserManager } from "../src/browser/manager.ts";
 
 describe("resolveDeepSeekFlags", () => {
 	test("defaults: chat=not thinking+search, reasoner=thinking+search", () => {
@@ -95,6 +95,33 @@ test("DeepSeekWebClient rejects requests without a chat ID", async () => {
 	});
 });
 
+test("DeepSeekWebClient forwards resolved flags to the DOM sender", async () => {
+	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
+	let sentParams: Record<string, unknown> | undefined;
+	const internals = client as unknown as {
+		getPageForConversation: () => Promise<unknown>;
+		sendViaDom: (_page: unknown, params: Record<string, unknown>) => Promise<string>;
+	};
+	internals.getPageForConversation = async () => ({ url: () => "https://chat.deepseek.com/" });
+	internals.sendViaDom = async (_page, params) => {
+		sentParams = params;
+		return "answer";
+	};
+
+	await client.sendMessage({
+		message: "task",
+		model: "deepseek-reasoner:no-think:search-off",
+		reasoningEffort: "high",
+		conversationId: "ses_chat_a",
+	});
+
+	expect(sentParams).toMatchObject({
+		model: "deepseek-reasoner",
+		thinking: false,
+		search: false,
+	});
+});
+
 test("DeepSeekWebClient sends after paste attachments are processed", async () => {
 	const client = new DeepSeekWebClient({ cookie: "", bearer: "", userAgent: "test" });
 	const state = {
@@ -103,6 +130,9 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		lastMessageText: "previous answer",
 		continueClicks: 0,
 		continueVisible: true,
+		retryClicks: 0,
+		retryVisible: false,
+		failNextSubmit: false,
 		inputReady: false,
 		pasteProcessed: false,
 		uploaded: undefined as unknown,
@@ -111,6 +141,9 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		sendAttempts: 0,
 		enterPresses: 0,
 		submitOnEnter: true,
+		thinking: true,
+		search: false,
+		toggleClicks: [] as string[],
 	};
 	const input = {
 		count: async () => 1,
@@ -133,7 +166,11 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		press: async (key: string) => {
 			if (key !== "Enter") throw new Error(`unexpected key: ${key}`);
 			state.enterPresses++;
-			if (state.submitOnEnter) state.lastMessageText = "completed answer";
+			if (state.submitOnEnter) {
+				state.messageCount++;
+				state.lastMessageText = state.failNextSubmit ? "" : "completed answer";
+				state.retryVisible = state.failNextSubmit;
+			}
 		},
 	};
 	const fileInput = {
@@ -146,9 +183,12 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		},
 	};
 	const assistant = {
-		locator: () => ({
-			last: () => ({ innerText: async () => state.lastMessageText }),
-		}),
+		locator: (selector: string) => {
+			if (selector === ".ds-markdown") throw new Error("assistant content is already the markdown node");
+			return assistant;
+		},
+		last: () => assistant,
+		isVisible: async () => false,
 		innerText: async () => state.lastMessageText,
 	};
 	const sendButton = {
@@ -167,11 +207,26 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 		click: async () => {
 			if (!state.sendButtonReady) throw new Error("send button clicked before it became active");
 			state.sendAttempts++;
+			state.messageCount++;
 			state.lastMessageText = "completed answer";
 		},
 	};
+	const toggles = {
+		count: async () => 2,
+		nth: (index: number) => ({
+			innerText: async () => (index === 0 ? "DeepThink" : "Search"),
+			getAttribute: async (name: string) =>
+				name === "aria-pressed" ? String(index === 0 ? state.thinking : state.search) : null,
+			click: async () => {
+				const name = index === 0 ? "thinking" : "search";
+				state.toggleClicks.push(name);
+				state[name] = !state[name];
+			},
+		}),
+	};
 	const page = {
 		locator: (selector: string) => {
+			if (selector.includes("[aria-pressed]")) return toggles;
 			if (selector.includes('input[type="file"]')) return fileInput;
 			if (selector.includes("textarea")) return input;
 			if (selector.includes("button")) return sendButton;
@@ -180,12 +235,18 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 				last: () => assistant,
 			};
 		},
-		getByRole: () => ({
+		getByRole: (_role: string, options: { name: RegExp }) => ({
 			last: () => ({
-				isVisible: async () => state.continueVisible,
+				isVisible: async () => options.name.test("Retry") ? state.retryVisible : state.continueVisible,
 				click: async () => {
-					state.continueClicks++;
-					state.continueVisible = false;
+					if (options.name.test("Retry")) {
+						state.retryClicks++;
+						state.retryVisible = false;
+						state.lastMessageText = "completed answer";
+					} else {
+						state.continueClicks++;
+						state.continueVisible = false;
+					}
 				},
 			}),
 		}),
@@ -229,6 +290,7 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 	]);
 	expect(state.enterPresses).toBe(1);
 	expect(state.sendAttempts).toBe(0);
+	expect(state.toggleClicks).toEqual(["thinking", "search"]);
 
 	state.submitOnEnter = false;
 	state.lastMessageText = "previous answer";
@@ -244,6 +306,20 @@ test("DeepSeekWebClient sends after paste attachments are processed", async () =
 	);
 	expect(state.enterPresses).toBe(2);
 	expect(state.sendAttempts).toBe(1);
+	expect(state.toggleClicks).toEqual(["thinking", "search"]);
+
+	state.submitOnEnter = true;
+	state.failNextSubmit = true;
+	state.lastMessageText = "previous answer";
+	const recovered = await client.parseStream(
+		await client.sendMessage({
+			message: "image request",
+			conversationId: "ses_chat_a",
+			images: [{ url: "data:image/png;base64,AA==" }],
+		}),
+	);
+	expect(recovered.text).toBe("completed answer");
+	expect(state.retryClicks).toBe(1);
 });
 
 test("DeepSeekWebClient serializes requests to its dedicated page", async () => {

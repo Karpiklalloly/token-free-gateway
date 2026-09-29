@@ -1,5 +1,5 @@
+import type { ChatCompletionRequest, ImageInput } from "../openai/types.ts";
 import type { ReasoningEffort } from "./model-spec.ts";
-import type { ImageInput } from "../openai/types.ts";
 
 export interface ModelInfo {
 	id: string;
@@ -48,6 +48,7 @@ export interface WebProviderClient {
 	reasoningEffort?: ReasoningEffort;
 	conversationId?: string;
 	images?: ImageInput[];
+	history?: ChatCompletionRequest;
 }): Promise<ReadableStream<Uint8Array>>;
 	parseStream(
 		body: ReadableStream<Uint8Array>,

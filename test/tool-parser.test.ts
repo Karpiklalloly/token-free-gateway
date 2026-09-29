@@ -22,13 +22,13 @@ describe("extractSingleToolCall", () => {
 	test("parses a tool_json block after explanatory text", () => {
 		const text = `I need to trace where ContentPart[] is converted/sent. Let me look at the request handling and provider clients.
 \`\`\`tool_json
-{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content|role === \\\"user\\\"|role: \\\"user\\\"","path":"C:\\\\Users\\\\artem\\\\OneDrive\\\\Рабочий стол\\\\token-free-gateway\\\\src","include":"*.ts"}}
+{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content|role === \\\"user\\\"|role: \\\"user\\\"","path":"C:\\\\workspace\\\\src","include":"*.ts"}}
 \`\`\``;
 		expect(extractSingleToolCall(text)).toEqual({
 			name: "grep",
 			arguments: {
 				pattern: 'ContentPart|content as|\\.content|role === "user"|role: "user"',
-				path: "C:\\Users\\artem\\OneDrive\\Рабочий стол\\token-free-gateway\\src",
+				path: "C:\\workspace\\src",
 				include: "*.ts",
 			},
 		});
@@ -38,13 +38,13 @@ describe("extractSingleToolCall", () => {
 		const text = `I need to trace where ContentPart[] is converted/sent. Let me look at the request handling and provider clients.
 tool_json
 Copy Download
-{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content","path":"C:\\\\Users\\\\artem\\\\OneDrive\\\\Рабочий стол\\\\token-free-gateway\\\\src","include":"*.ts"}}`;
+{"tool":"grep","parameters":{"pattern":"ContentPart|content as|\\\\.content","path":"C:\\\\workspace\\\\src","include":"*.ts"}}`;
 		expect(hasToolCall(text)).toBe(true);
 		expect(extractSingleToolCall(text)).toEqual({
 			name: "grep",
 			arguments: {
 				pattern: "ContentPart|content as|\\.content",
-				path: "C:\\Users\\artem\\OneDrive\\Рабочий стол\\token-free-gateway\\src",
+				path: "C:\\workspace\\src",
 				include: "*.ts",
 			},
 		});
@@ -75,6 +75,24 @@ Copy Download
 		expect(extractSingleToolCall(text)).toEqual({
 			name: "edit",
 			arguments: JSON.parse(payload).parameters,
+		});
+	});
+
+	test("parses escaped DOM tool_json payloads", () => {
+		const payload = JSON.stringify({
+			tool: "edit",
+			parameters: {
+				filePath: "C:\\src\\client.ts",
+				oldString: "function f() {\n\treturn { ok: true };\n}",
+				newString: "function f() {\n\treturn { ok: false };\n}",
+			},
+		}).replace(/"/g, '\\"');
+		const text = `tool_json Copy Download ${payload}`;
+
+		expect(hasToolCall(text)).toBe(true);
+		expect(extractSingleToolCall(text)).toEqual({
+			name: "edit",
+			arguments: JSON.parse(payload.replace(/\\"/g, '"')).parameters,
 		});
 	});
 
@@ -166,6 +184,16 @@ describe("extractToolCalls", () => {
 		expect(result[1]?.name).toBe("read");
 	});
 
+	test("extracts multiple DOM tool_json blocks after fences are stripped", () => {
+		const text = `Now let me read the files.
+tool_json Copy Download {"tool":"read","filePath":"C:\\\\src\\\\base-dom-client.ts"}
+tool_json Copy Download {"tool":"grep","pattern":"setInputFiles|clipboard|paste","include":"*.ts","path":"C:\\\\src"}`;
+		expect(extractToolCalls(text)).toEqual([
+			{ name: "read", arguments: { filePath: "C:\\src\\base-dom-client.ts" } },
+			{ name: "grep", arguments: { pattern: "setInputFiles|clipboard|paste", include: "*.ts", path: "C:\\src" } },
+		]);
+	});
+
 	test("returns single tool call as array", () => {
 		const text = '```tool_json\n{"tool":"exec","parameters":{"command":"ls"}}\n```';
 		const result = extractToolCalls(text);
@@ -175,6 +203,19 @@ describe("extractToolCalls", () => {
 
 	test("returns empty array for plain text", () => {
 		expect(extractToolCalls("No tools here")).toEqual([]);
+	});
+
+	test("extracts Hermes-style calls with numeric arguments and nested command quotes", () => {
+		const text = `search_files(pattern="SOUL.md", target="files", path="C:/tmp/hermes", limit=20)
+
+search_files(pattern="SOUL", target="files", path="C:/tmp/hermes", limit=20)
+
+terminal(command="ls -la "$LOCALAPPDATA/hermes" 2>/dev/null | head -50")`;
+		expect(extractToolCalls(text)).toEqual([
+			{ name: "search_files", arguments: { pattern: "SOUL.md", target: "files", path: "C:/tmp/hermes", limit: 20 } },
+			{ name: "search_files", arguments: { pattern: "SOUL", target: "files", path: "C:/tmp/hermes", limit: 20 } },
+			{ name: "terminal", arguments: { command: 'ls -la "$LOCALAPPDATA/hermes" 2>/dev/null | head -50' } },
+		]);
 	});
 });
 
