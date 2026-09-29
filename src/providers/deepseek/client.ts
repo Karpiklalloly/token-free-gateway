@@ -285,7 +285,9 @@ export class DeepSeekWebClient extends BaseDomClient<DeepSeekWebCredentials> {
 		for (let elapsed = 0; elapsed < maxWait; elapsed += interval) {
 			if (params.signal?.aborted) throw new Error("deepseek-web request aborted");
 			const retryButton = page.getByRole("button", { name: /^Retry$/i }).last();
-			const retryFallback = page.locator('[title="Retry"]:visible, [aria-label="Retry"]:visible').last();
+			const retryFallback = message.locator(
+				'[title="Retry"]:visible, [aria-label="Retry"]:visible, .ds-button--warning.ds-button--circle[role="button"]:visible',
+			).last();
 			const visibleRetry = await retryButton.isVisible().catch(() => false)
 				? retryButton
 				: await retryFallback.isVisible().catch(() => false) ? retryFallback : null;
